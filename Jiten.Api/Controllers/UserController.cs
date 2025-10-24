@@ -1,4 +1,5 @@
 using Hangfire;
+using Jiten.Api.Dtos.Requests;
 using Jiten.Api.Jobs;
 using Jiten.Api.Services;
 using Jiten.Core;
@@ -186,6 +187,63 @@ public class UserController(
         backgroundJobs.Enqueue<ComputationJob>(job => job.ComputeUserCoverage(userId));
 
         return Results.Ok(new { parsed = parsedWords.Count, added });
+    }
+    
+    /// <summary>
+    /// Parse a JSON coming from AnkiConnect
+    /// </summary>
+    [HttpPost("vocabulary/import-from-anki")]
+    [Consumes("text/json", "application/json")]
+    public async Task<IActionResult> ImportFromAnki([FromBody] AnkiImportRequest request)
+    {
+        var userId = userService.UserId;
+        if (string.IsNullOrEmpty(userId)) return Results.Unauthorized();
+        
+        if (request?.Cards == null || request.Cards.Count == 0)
+            return BadRequest("No cards provided.");
+
+        int importedCount = 0;
+
+        foreach (var item in request.Cards)
+        {
+            var cardData = item.Card;
+            var reviewLogs = item.ReviewLogs;
+
+            var fsrsCard = new FsrsCard
+                           {
+                               CardId = cardData.CardId,
+                               UserId = User.Identity?.Name ?? "unknown",
+                               WordId = cardData.WordId,
+                               ReadingIndex = 0,
+                               State = cardData.State,
+                               Step = null,
+                               Stability = cardData.Stability,
+                               Difficulty = Math.Clamp(10 - (cardData.Difficulty!.Value - 1300) / 170.0, 1.0, 10.0),
+                               Due = cardData.Due, // TODO: add collection creation time
+                               LastReview = DateTimeOffset.FromUnixTimeSeconds(cardData.LastReview).UtcDateTime
+                           };
+
+            _dbContext.FsrsCards.Add(fsrsCard);
+            await _dbContext.SaveChangesAsync();
+
+            foreach (var review in reviewLogs)
+            {
+                var log = new FsrsReviewLog
+                          {
+                              ReviewLogId = review.ReviewLogId,
+                              CardId = fsrsCard.CardId,
+                              ReviewDateTime = review.ReviewDateTime,
+                              ReviewDuration = review.ReviewDuration,
+                              Rating = MapRating(review.Rating)
+                          };
+                _dbContext.FsrsReviewLogs.Add(log);
+            }
+
+            await _dbContext.SaveChangesAsync();
+            importedCount++;
+        }
+
+        return Ok(new { imported = importedCount });
     }
 
     /// <summary>
