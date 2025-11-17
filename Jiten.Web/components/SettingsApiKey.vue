@@ -165,7 +165,7 @@
 
         <div v-if="!apiKeyInfo && !newlyCreatedKey">
           <p class="mb-4">
-            API keys allow you to authenticate with the Jiten API programmatically. You can use them to build integrations or access your data from external applications.
+            API keys allow you to authenticate with the Jiten API from 3rd party applications. Never give this key to anyone or an application you don't trust as it can access all your information.
           </p>
           <Message severity="info" :closable="false" class="mb-4">
             <p>Your API key will only be shown once after creation. Make sure to store it securely.</p>
