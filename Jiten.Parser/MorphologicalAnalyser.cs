@@ -105,6 +105,7 @@ public class MorphologicalAnalyser
         wordInfos = CombineConjunctiveParticle(wordInfos);
         wordInfos = CombineParticles(wordInfos);
 
+        wordInfos = CombineHiraganaElongation(wordInfos);
         wordInfos = CombineFinal(wordInfos);
 
         wordInfos = FilterMisparse(wordInfos);
@@ -134,8 +135,16 @@ public class MorphologicalAnalyser
 
             if (word is { Text: "つ", PartOfSpeech: PartOfSpeech.Suffix })
                 word.PartOfSpeech = PartOfSpeech.Counter;
+            
+            if (word.Text is "だー" or "だあ")
+            {
+                word.Text = "だ";
+                word.DictionaryForm = "です";
+                word.PartOfSpeech = PartOfSpeech.Auxiliary;
+            }
 
-            if (word.Text is "そ" or "ー" or "る" or "ま" or "ふ" or "ち" or "ほ" or "す" or "じ" or "なさ" ||
+
+            if (word.Text is "そ" or "ー" or "る" or "ま" or "ふ" or "ち" or "ほ" or "す" or "じ" or "なさ" or "い" ||
                 word.PartOfSpeech == PartOfSpeech.Noun && (
                     (word.Text.Length == 1 && WanaKana.IsKana(word.Text)) ||
                     word.Text.Length == 2 && WanaKana.IsKana(word.Text[0].ToString()) && word.Text[1] == 'ー'
@@ -337,14 +346,7 @@ public class MorphologicalAnalyser
 
             if (w1.Text is "十五")
                 w1.PartOfSpeech = PartOfSpeech.Numeral;
-
-            if (w1.Text is "だー" or "だあ")
-            {
-                w1.Text = "だ";
-                w1.DictionaryForm = "です";
-                w1.PartOfSpeech = PartOfSpeech.Auxiliary;
-            }
-
+            
             newList.Add(w1);
             i++;
         }
@@ -792,6 +794,43 @@ public class MorphologicalAnalyser
             i++;
         }
 
+        return newList;
+    }
+    
+    private List<WordInfo> CombineHiraganaElongation(List<WordInfo> wordInfos)
+    {
+        if (wordInfos.Count < 2) return wordInfos;
+
+        var newList = new List<WordInfo>(wordInfos.Count);
+        var currentWord = new WordInfo(wordInfos[0]);
+
+        for (int i = 1; i < wordInfos.Count; i++)
+        {
+            var nextWord = wordInfos[i];
+
+            // CHECK: Does the current word end in 'ー'?
+            bool endsInBar = currentWord.Text.EndsWith("ー");
+
+            // CHECK: Are we dealing with Hiragana? (Ignore Katakana words like コーヒー)
+            // We strip the 'ー' to check if the 'root' is Hiragana.
+            bool isHiraganaBase = WanaKana.IsHiragana(currentWord.Text.Replace("ー", ""));
+            bool nextIsHiragana = WanaKana.IsHiragana(nextWord.Text.Replace("ー", ""));
+
+            // LOGIC: If current is [Hiragana]ー and next is [Hiragana], they are likely one spoken word.
+            // Example: どー (Do-) + いう (Iu) -> どーいう
+            // Example: だー (Da-) + かー (Ka-) -> だーかー
+            if (endsInBar && isHiraganaBase && nextIsHiragana)
+            {
+                currentWord.Text += nextWord.Text;
+            }
+            else
+            {
+                newList.Add(currentWord);
+                currentWord = new WordInfo(nextWord);
+            }
+        }
+
+        newList.Add(currentWord);
         return newList;
     }
 
