@@ -84,56 +84,119 @@
         return;
       }
 
-      const batchSize = 500;
-      cards.value = [];
+      // Retrieve cards info
+      const batchSize = 200;
+      const allCardsInfo: any[] = [];
+
       for (let i = 0; i < cardsIds.length; i += batchSize) {
         const batch = cardsIds.slice(i, i + batchSize);
         const cardsBatch = await client.card.cardsInfo({ cards: batch });
-        const mapped = (cardsBatch || []).map((card: any) => {
-          const field = (card.fields as Record<string, { order: number; value: string }>)[fieldName];
-          const val = field ? field.value : '';
-          return { value: val, reps: card.reps ?? 0 };
-        });
-        cards.value = cards.value.concat(mapped);
+        allCardsInfo.push(...(cardsBatch || []));
       }
 
+      // Retrieve all reviews
+      const deckName = deckEntries.find(([_, id]) => id === selectedDeck.value)?.[0];
+      if (!deckName) {
+        console.warn("Deck not found for selectedDeck:", selectedDeck.value);
+        return;
+      }
+
+      const reviews = await client.statistic.cardReviews({
+        deck: deckName,
+        startID: 1,
+      });
+
+      const reviewByCard = new Map<number, any[]>();
+      for (const [reviewTime, cardID, _usn, buttonPressed, newInterval, previousInterval, newFactor, reviewDuration, reviewType] of reviews) {
+        const existing = reviewByCard.get(cardID) ?? [];
+        existing.push({
+          CardId: cardID,
+          Rating: buttonPressed,
+          ReviewDateTime: new Date(reviewTime),
+          ReviewDuration: reviewDuration,
+          Factor: newFactor,
+          Type: reviewType,
+          Interval: newInterval,
+          LastInterval: previousInterval,
+        });
+        reviewByCard.set(cardID, existing);
+      }
+
+      // Only keep 10 most recent reviews
+      for (const [key, arr] of reviewByCard.entries()) {
+        arr.sort((a, b) => b.ReviewLogId - a.ReviewLogId);
+        reviewByCard.set(key, arr.slice(0, 10));
+      }
+
+      // Prepare payload
+      const enrichedCards: any[] = [];
+      for (const card of allCardsInfo) {
+        const field = (card.fields as Record<string, { order: number; value: string }>)[fieldName];
+        const val = field ? field.value.trim() : '';
+
+        const reviews = reviewByCard.get(card.cardId) ?? [];
+        const lastFactor = reviews.length > 0 ? reviews[0].Factor : 2500;
+
+        const fsrsCard = {
+          Word: val,
+          Stability: card.interval,
+          Difficulty: lastFactor,
+          Reps: card.reps,
+          Lapses: card.lapses,
+          Due: card.due,
+          State: card.queue,
+          Type: card.type,
+          LastReview: card.mod,
+        };
+
+        const fsrsReviewLogs = reviews.map((r) => ({
+          CardId: r.CardId,
+          Rating: r.Rating,
+          ReviewDateTime: r.ReviewDateTime,
+          ReviewDuration: r.ReviewDuration,
+        }));
+
+        enrichedCards.push({
+          Card: fsrsCard,
+          ReviewLogs: fsrsReviewLogs,
+        });
+      }
+
+      cards.value = enrichedCards;
       isLoading.value = false;
     }
 
     if (currentStep.value == 4) {
       isLoading.value = true;
 
-      // We already stored only the selected field's value and reps, so just collect those values
-      const lines = cardsToKeep.value.map((c) => (c.value ?? '').trim()).filter((v) => v.length > 0);
-      const textContent = lines.join('\n');
+      try {
+        const payload = {
+          cards: cards.value,
+        };
 
-      try{
-      const file = new File([textContent], 'anki-words.txt', { type: 'text/plain' });
-
-      const formData = new FormData();
-      formData.append('file', file);
-
-      const result = await $api<{ parsed: number; added: number; }>('user/vocabulary/import-from-anki-txt', {
-        method: 'POST',
-        body: formData,
-      });
-
-      if (result) {
-        toast.add({
-          severity: 'success',
-          summary: 'Known words updated',
-          detail: `Parsed ${result.parsed} words, added ${result.added} forms.`,
-          life: 6000,
+        const result = await $api<{ imported: number }>('user/vocabulary/import-from-anki-json', {
+          method: 'POST',
+          body: JSON.stringify(payload),
+          headers: {
+            'Content-Type': 'application/json',
+          },
         });
-      }
+
+        if (result) {
+          toast.add({
+            severity: 'success',
+            summary: 'Anki Data Imported',
+            detail: `Imported ${result.imported} cards.`,
+            life: 6000,
+          });
+        }
       } catch (error) {
-        console.error('Error processing words:', error);
-        toast.add({ severity: 'error', detail: 'Failed to process words.', life: 5000 });
+        console.error('Error processing Anki data:', error);
+        toast.add({ severity: 'error', detail: 'Failed to import data.', life: 5000 });
       } finally {
         isLoading.value = false;
         currentStep.value = 1;
       }
-
     }
   };
 </script>
@@ -194,14 +257,12 @@
           <p>Loading cards: {{ cards.length }}/{{ cardsIds.length }} ({{ ((cards.length / cardsIds.length) * 100).toFixed(0) }}%)...</p>
         </div>
         <div v-else>
-          <p>Minimum amount of reviews for a word to be considered as known <InputNumber v-model="reviewsForKnown" show-buttons :min="0" /></p>
           <p>
-            This will keep <b>{{ cardsToKeep.length }} words out of {{ cards.length }}</b
-            >. All other words will stay unknown.
+            This will import <b>{{ cards.length }} words</b>.
           </p>
           <div class="flex flex-row gap-2 p-4">
             <Button label="Back" :disabled="!selectedDeck" @click="PreviousStep()" />
-            <Button label="Import" :disabled="!selectedDeck || cardsToKeep.length <= 0" @click="NextStep()" />
+            <Button label="Import" :disabled="!selectedDeck" @click="NextStep()" />
           </div>
         </div>
       </div>
