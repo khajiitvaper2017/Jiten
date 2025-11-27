@@ -77,18 +77,24 @@ public class UserController(
         var userId = userService.UserId;
         if (string.IsNullOrEmpty(userId)) return Results.Unauthorized();
 
-        var entries = await userContext.FsrsCards
-                                       .Where(uk => uk.UserId == userId)
-                                       .ToListAsync();
-        if (entries.Count == 0) return Results.Ok(new { removed = 0 });
+        var cards = await userContext.FsrsCards
+                                     .Where(uk => uk.UserId == userId)
+                                     .ToListAsync();
+        var cardIds = cards.Select(c => c.CardId).ToList();
+        var reviewLogs = await userContext.FsrsReviewLogs
+                                          .Where(rl => cardIds.Contains(rl.CardId))
+                                          .ToListAsync();
+        if (cards.Count == 0) return Results.Ok(new { removed = 0 });
 
-        userContext.FsrsCards.RemoveRange(entries);
+        userContext.FsrsReviewLogs.RemoveRange(reviewLogs);
+        userContext.FsrsCards.RemoveRange(cards);
         await userContext.SaveChangesAsync();
 
         backgroundJobs.Enqueue<ComputationJob>(job => job.ComputeUserCoverage(userId));
 
-        logger.LogInformation("User cleared all known words: UserId={UserId}, RemovedCount={RemovedCount}", userId, entries.Count);
-        return Results.Ok(new { removed = entries.Count });
+        logger.LogInformation("User cleared all known words: UserId={UserId}, RemovedCount={RemovedCount}, RemovedLogsCount={RemovedLogsCount}",
+                              userId, cards.Count, reviewLogs.Count);
+        return Results.Ok(new { removed = cards.Count, removedLogs = reviewLogs.Count });
     }
 
     /// <summary>
@@ -142,7 +148,7 @@ public class UserController(
         backgroundJobs.Enqueue<ComputationJob>(job => job.ComputeUserCoverage(userId));
 
         logger.LogInformation("User imported words from IDs: UserId={UserId}, AddedCount={AddedCount}, SkippedCount={SkippedCount}",
-            userId, toInsert.Count, alreadyKnown.Count);
+                              userId, toInsert.Count, alreadyKnown.Count);
         return Results.Ok(new { added = toInsert.Count, skipped = alreadyKnown.Count });
     }
 
@@ -192,7 +198,7 @@ public class UserController(
         backgroundJobs.Enqueue<ComputationJob>(job => job.ComputeUserCoverage(userId));
 
         logger.LogInformation("User imported words from Anki TXT: UserId={UserId}, ParsedCount={ParsedCount}, AddedCount={AddedCount}",
-            userId, parsedWords.Count, added);
+                              userId, parsedWords.Count, added);
         return Results.Ok(new { parsed = parsedWords.Count, added });
     }
 
@@ -289,7 +295,7 @@ public class UserController(
         backgroundJobs.Enqueue<ComputationJob>(job => job.ComputeUserCoverage(userId));
 
         logger.LogInformation("User imported words from frequency range: UserId={UserId}, MinFreq={MinFrequency}, MaxFreq={MaxFrequency}, WordCount={WordCount}, FormCount={FormCount}",
-            userId, minFrequency, maxFrequency, jmdictWords.Count, toInsert.Count);
+                              userId, minFrequency, maxFrequency, jmdictWords.Count, toInsert.Count);
         return Results.Ok(new { words = jmdictWords.Count, forms = toInsert.Count });
     }
 
@@ -338,21 +344,9 @@ public class UserController(
                                           .FirstOrDefaultAsync(p => p.UserId == userId && p.DeckId == deckId);
 
         if (preference == null)
-            return Results.Ok(new
-            {
-                deckId,
-                status = DeckStatus.None,
-                isFavourite = false,
-                isIgnored = false
-            });
+            return Results.Ok(new { deckId, status = DeckStatus.None, isFavourite = false, isIgnored = false });
 
-        return Results.Ok(new
-        {
-            preference.DeckId,
-            preference.Status,
-            preference.IsFavourite,
-            preference.IsIgnored
-        });
+        return Results.Ok(new { preference.DeckId, preference.Status, preference.IsFavourite, preference.IsIgnored });
     }
 
     /// <summary>
@@ -379,13 +373,7 @@ public class UserController(
         preference.IsFavourite = request.IsFavourite;
         await userContext.SaveChangesAsync();
 
-        return Results.Ok(new
-        {
-            preference.DeckId,
-            preference.Status,
-            preference.IsFavourite,
-            preference.IsIgnored
-        });
+        return Results.Ok(new { preference.DeckId, preference.Status, preference.IsFavourite, preference.IsIgnored });
     }
 
     /// <summary>
@@ -412,13 +400,7 @@ public class UserController(
         preference.IsIgnored = request.IsIgnored;
         await userContext.SaveChangesAsync();
 
-        return Results.Ok(new
-        {
-            preference.DeckId,
-            preference.Status,
-            preference.IsFavourite,
-            preference.IsIgnored
-        });
+        return Results.Ok(new { preference.DeckId, preference.Status, preference.IsFavourite, preference.IsIgnored });
     }
 
     /// <summary>
@@ -442,13 +424,7 @@ public class UserController(
         preference.Status = request.Status;
         await userContext.SaveChangesAsync();
 
-        return Results.Ok(new
-        {
-            preference.DeckId,
-            preference.Status,
-            preference.IsFavourite,
-            preference.IsIgnored
-        });
+        return Results.Ok(new { preference.DeckId, preference.Status, preference.IsFavourite, preference.IsIgnored });
     }
 
     /// <summary>
@@ -470,5 +446,196 @@ public class UserController(
         await userContext.SaveChangesAsync();
 
         return Results.Ok(new { deleted = true });
+    }
+
+    /// <summary>
+    /// Export all FSRS cards and review logs for the current user as JSON.
+    /// </summary>
+    [HttpGet("vocabulary/export")]
+    public async Task<IResult> ExportVocabulary()
+    {
+        var userId = userService.UserId;
+        if (string.IsNullOrEmpty(userId)) return Results.Unauthorized();
+
+        var cards = await userContext.FsrsCards
+                                     .AsNoTracking()
+                                     .Include(c => c.ReviewLogs)
+                                     .Where(c => c.UserId == userId)
+                                     .OrderBy(c => c.WordId)
+                                     .ThenBy(c => c.ReadingIndex)
+                                     .ToListAsync();
+
+        var exportDto = new FsrsExportDto
+                        {
+                            ExportDate = DateTime.UtcNow, UserId = userId, TotalCards = cards.Count,
+                            TotalReviews = cards.Sum(c => c.ReviewLogs.Count), Cards = cards.Select(c => new FsrsCardExportDto
+                                {
+                                    WordId = c.WordId, ReadingIndex = c.ReadingIndex, State = c.State, Step = c.Step,
+                                    Stability = c.Stability, Difficulty = c.Difficulty,
+                                    Due = new DateTimeOffset(c.Due).ToUnixTimeSeconds(),
+                                    LastReview = c.LastReview.HasValue
+                                        ? new DateTimeOffset(c.LastReview.Value).ToUnixTimeSeconds()
+                                        : null,
+                                    ReviewLogs = c.ReviewLogs.OrderBy(r => r.ReviewDateTime)
+                                                  .Select(r => new FsrsReviewLogExportDto
+                                                               {
+                                                                   Rating = r.Rating,
+                                                                   ReviewDateTime = new DateTimeOffset(r.ReviewDateTime)
+                                                                       .ToUnixTimeSeconds(),
+                                                                   ReviewDuration = r.ReviewDuration
+                                                               }).ToList()
+                                }).ToList()
+                        };
+
+        logger.LogInformation("User exported vocabulary: UserId={UserId}, CardCount={CardCount}, ReviewCount={ReviewCount}",
+                              userId, exportDto.TotalCards, exportDto.TotalReviews);
+
+        return Results.Ok(exportDto);
+    }
+
+    /// <summary>
+    /// Import FSRS cards and review logs from JSON export.
+    /// </summary>
+    [HttpPost("vocabulary/import")]
+    public async Task<IResult> ImportVocabulary([FromBody] FsrsExportDto exportDto, [FromQuery] bool overwrite = false)
+    {
+        var userId = userService.UserId;
+        if (string.IsNullOrEmpty(userId)) return Results.Unauthorized();
+
+        if (exportDto?.Cards == null || exportDto.Cards.Count == 0)
+            return Results.BadRequest("Invalid export data");
+
+        var result = new FsrsImportResultDto
+                     {
+                         ValidationErrors = [], CardsImported = 0, CardsSkipped = 0, CardsUpdated = 0, ReviewLogsImported = 0
+                     };
+
+        var distinctWordIds = exportDto.Cards.Select(c => c.WordId).Distinct().ToList();
+
+        var wordValidationMap = await jitenContext.JMDictWords
+                                                  .AsNoTracking()
+                                                  .Where(w => distinctWordIds.Contains(w.WordId))
+                                                  .Select(w => new { w.WordId, ReadingCount = w.Readings.Count })
+                                                  .ToDictionaryAsync(w => w.WordId);
+
+        var validCards = new List<FsrsCardExportDto>(exportDto.Cards.Count);
+
+        foreach (var card in exportDto.Cards)
+        {
+            if (!wordValidationMap.TryGetValue(card.WordId, out var wordInfo))
+            {
+                result.ValidationErrors.Add($"WordId {card.WordId} does not exist in JMDict");
+                continue;
+            }
+
+            if (card.ReadingIndex >= wordInfo.ReadingCount)
+            {
+                result.ValidationErrors.Add($"WordId {card.WordId} ReadingIndex {card.ReadingIndex} is invalid");
+                continue;
+            }
+
+            validCards.Add(card);
+        }
+
+        if (validCards.Count == 0)
+        {
+            return Results.Ok(result);
+        }
+
+        await using var transaction = await userContext.Database.BeginTransactionAsync();
+        try
+        {
+            var existingCardsMap = await userContext.FsrsCards
+                                                    .Include(c => c.ReviewLogs)
+                                                    .Where(c => c.UserId == userId)
+                                                    .ToDictionaryAsync(c => (c.WordId, c.ReadingIndex));
+
+            var cardsToAdd = new List<FsrsCard>();
+
+            foreach (var cardDto in validCards)
+            {
+                var key = (cardDto.WordId, cardDto.ReadingIndex);
+
+                if (existingCardsMap.TryGetValue(key, out var existingCard))
+                {
+                    if (!overwrite)
+                    {
+                        result.CardsSkipped++;
+                        continue;
+                    }
+
+                    existingCard.State = cardDto.State;
+                    existingCard.Step = cardDto.Step;
+                    existingCard.Stability = cardDto.Stability;
+                    existingCard.Difficulty = cardDto.Difficulty;
+                    existingCard.Due = DateTimeOffset.FromUnixTimeSeconds(cardDto.Due).UtcDateTime;
+                    existingCard.LastReview = cardDto.LastReview.HasValue
+                        ? DateTimeOffset.FromUnixTimeSeconds(cardDto.LastReview.Value).UtcDateTime
+                        : null;
+
+                    // Replace logs: Clear old ones, Add new ones
+                    userContext.FsrsReviewLogs.RemoveRange(existingCard.ReviewLogs);
+
+                    foreach (var logDto in cardDto.ReviewLogs)
+                    {
+                        existingCard.ReviewLogs.Add(new FsrsReviewLog
+                                                    {
+                                                        Rating = logDto.Rating,
+                                                        ReviewDateTime = DateTimeOffset.FromUnixTimeSeconds(logDto.ReviewDateTime)
+                                                                                       .UtcDateTime,
+                                                        ReviewDuration = logDto.ReviewDuration,
+                                                        // EF Core handles the FK association automatically here
+                                                    });
+                    }
+
+                    result.CardsUpdated++;
+                    result.ReviewLogsImported += cardDto.ReviewLogs.Count;
+                }
+                else
+                {
+                    var newCard = new FsrsCard(userId, cardDto.WordId, cardDto.ReadingIndex)
+                                  {
+                                      State = cardDto.State, Step = cardDto.Step, Stability = cardDto.Stability,
+                                      Difficulty = cardDto.Difficulty, Due = DateTimeOffset.FromUnixTimeSeconds(cardDto.Due).UtcDateTime,
+                                      LastReview = cardDto.LastReview.HasValue
+                                          ? DateTimeOffset.FromUnixTimeSeconds(cardDto.LastReview.Value).UtcDateTime
+                                          : null,
+                                      ReviewLogs = cardDto.ReviewLogs.Select(l => new FsrsReviewLog
+                                                                                  {
+                                                                                      Rating = l.Rating,
+                                                                                      ReviewDateTime = DateTimeOffset
+                                                                                          .FromUnixTimeSeconds(l.ReviewDateTime)
+                                                                                          .UtcDateTime,
+                                                                                      ReviewDuration = l.ReviewDuration
+                                                                                  }).ToList()
+                                  };
+
+                    cardsToAdd.Add(newCard);
+                    result.CardsImported++;
+                    result.ReviewLogsImported += cardDto.ReviewLogs.Count;
+                }
+            }
+
+            if (cardsToAdd.Count > 0)
+            {
+                await userContext.FsrsCards.AddRangeAsync(cardsToAdd);
+            }
+
+            await userContext.SaveChangesAsync();
+            await transaction.CommitAsync();
+
+            backgroundJobs.Enqueue<ComputationJob>(job => job.ComputeUserCoverage(userId));
+
+            logger.LogInformation("Import stats: Imported={Imported}, Updated={Updated}, Skipped={Skipped}",
+                                  result.CardsImported, result.CardsUpdated, result.CardsSkipped);
+
+            return Results.Ok(result);
+        }
+        catch (Exception ex)
+        {
+            await transaction.RollbackAsync();
+            logger.LogError(ex, "Import failed");
+            return Results.Problem("Import failed: " + ex.Message);
+        }
     }
 }

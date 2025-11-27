@@ -411,6 +411,10 @@ builder.Services.AddCors(options =>
     });
 });
 
+builder.Services.AddResponseCompression(options =>
+{
+    options.EnableForHttps = true;
+});
 
 // Hangfire jobs
 builder.Services.AddScoped<ParseJob>();
@@ -504,6 +508,7 @@ using (var scope = app.Services.CreateScope())
                                               Cron.Daily());
 }
 
+app.UseResponseCompression();
 
 app.UseForwardedHeaders(new ForwardedHeadersOptions
                         {
