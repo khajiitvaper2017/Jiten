@@ -286,8 +286,9 @@
       // Add tags from metadata if available
       if (selectedMetadata.value?.tags && selectedMetadata.value.tags.length > 0) {
         for (let i = 0; i < selectedMetadata.value.tags.length; i++) {
-          formData.append(`tags[${i}].name`, selectedMetadata.value.tags[i].name);
-          formData.append(`tags[${i}].percentage`, selectedMetadata.value.tags[i].percentage.toString());
+          const tag = selectedMetadata.value.tags[i];
+          formData.append(`tags[${i}].name`, tag.name);
+          formData.append(`tags[${i}].percentage`, String(tag.percentage ?? 0));
         }
       }
 

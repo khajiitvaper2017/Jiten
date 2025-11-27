@@ -24,7 +24,6 @@ public static partial class MetadataProviderHelper
 
         var tagMappings = await context.ExternalTagMappings
                                        .AsNoTracking()
-                                       .Include(m => m.Tag)
                                        .Where(m => m.Provider == linkType)
                                        .ToListAsync();
 
@@ -38,13 +37,13 @@ public static partial class MetadataProviderHelper
 
                 if (mapping != null && deck.DeckGenres.All(dg => dg.Genre != mapping.JitenGenre))
                 {
-                    deck.DeckGenres.Add(new DeckGenre { DeckId = deck.DeckId, Genre = mapping.JitenGenre, Deck = deck });
+                    deck.DeckGenres.Add(new DeckGenre { DeckId = deck.DeckId, Genre = mapping.JitenGenre });
                 }
             }
         }
         
         if (metadata.IsAdultOnly && deck.DeckGenres.All(dg => dg.Genre != Genre.AdultOnly))
-            deck.DeckGenres.Add(new DeckGenre { DeckId = deck.DeckId, Genre = Genre.AdultOnly, Deck = deck });
+            deck.DeckGenres.Add(new DeckGenre { DeckId = deck.DeckId, Genre = Genre.AdultOnly });
 
         // Add new tags if found (using highest percentage for duplicate mappings)
         if (metadata.Tags.Any())
@@ -52,13 +51,13 @@ public static partial class MetadataProviderHelper
             // Phase 1: Group external tags by internal TagId and find max percentage
             var tagCandidates = new Dictionary<int, byte>();
 
-            foreach (var (externalTagName, percentage) in metadata.Tags)
+            foreach (var tag in metadata.Tags)
             {
-                var mapping = tagMappings.FirstOrDefault(m => m.ExternalTagName.Equals(externalTagName, StringComparison.OrdinalIgnoreCase));
+                var mapping = tagMappings.FirstOrDefault(m => m.ExternalTagName.Equals(tag.Name, StringComparison.OrdinalIgnoreCase));
 
                 if (mapping == null) continue;
 
-                byte validPercentage = (byte)Math.Clamp(percentage, 0, 100);
+                byte validPercentage = (byte)Math.Clamp(tag.Percentage, 0, 100);
 
                 // If we've seen this TagId before, keep the higher percentage
                 if (!tagCandidates.TryAdd(mapping.TagId, validPercentage))
@@ -83,14 +82,13 @@ public static partial class MetadataProviderHelper
                 else
                 {
                     // Tag doesn't exist - add it
-                    var tagMapping = tagMappings.First(m => m.TagId == tagId);
+                    // Only set foreign keys, not navigation properties
+                    // Setting Tag navigation property causes EF to attempt INSERT of existing Tag entity
                     deck.DeckTags.Add(new DeckTag
                                       {
                                           DeckId = deck.DeckId,
                                           TagId = tagId,
-                                          Percentage = maxPercentage,
-                                          Deck = deck,
-                                          Tag = tagMapping.Tag
+                                          Percentage = maxPercentage
                                       });
                 }
             }

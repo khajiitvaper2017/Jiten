@@ -89,8 +89,12 @@ public static partial class MetadataProviderHelper
                                                              Image = media.CoverImage.ExtraLarge, Aliases = media.Synonyms,
                                                              Rating = media.AverageScore ?? media.MeanScore ?? 0,
                                                              Genres = media.Genres.Distinct().ToList(), Tags = media.Tags
-                                                                 .Where(t => !t.IsMediaSpoiler).Distinct().ToList()
-                                                                 .Select(tag => (tag.Name, tag.Rank)).ToList(),
+                                                                 .Where(t => !t.IsMediaSpoiler).Distinct()
+                                                                 .Select(tag => new MetadataTag
+                                                                 {
+                                                                     Name = tag.Name,
+                                                                     Percentage = tag.Rank
+                                                                 }).ToList(),
                                                              IsAdultOnly = media.IsAdult
                                                          }).ToList() ?? [];
     }
@@ -162,7 +166,11 @@ public static partial class MetadataProviderHelper
                        new Link { LinkType = LinkType.Anilist, Url = $"https://anilist.co/manga/{media.Id}" }
                    ],
                    Image = media.CoverImage.ExtraLarge, Aliases = media.Synonyms, Rating = media.AverageScore ?? media.MeanScore ?? 0,
-                   Genres = genres, Tags = tags.Select(tag => (tag.Name, tag.Rank)).ToList(), IsAdultOnly = media.IsAdult
+                   Genres = genres, Tags = tags.Select(tag => new MetadataTag
+                   {
+                       Name = tag.Name,
+                       Percentage = tag.Rank
+                   }).ToList(), IsAdultOnly = media.IsAdult
                };
     }
 
@@ -238,7 +246,11 @@ public static partial class MetadataProviderHelper
                        new Link { LinkType = LinkType.Mal, Url = $"https://myanimelist.net/anime/{media.IdMal}" }
                    ],
                    Image = media.CoverImage.ExtraLarge, Aliases = media.Synonyms, Rating = media.AverageScore ?? media.MeanScore ?? 0,
-                   Genres = genres, Tags = tags.Select(tag => (tag.Name, tag.Rank)).ToList(), IsAdultOnly = media.IsAdult
+                   Genres = genres, Tags = tags.Select(tag => new MetadataTag
+                   {
+                       Name = tag.Name,
+                       Percentage = tag.Rank
+                   }).ToList(), IsAdultOnly = media.IsAdult
                };
     }
 }

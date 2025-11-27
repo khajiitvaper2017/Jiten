@@ -104,7 +104,11 @@ public static partial class MetadataProviderHelper
                            Links = [new Link { LinkType = LinkType.Igdb, Url = game.Url }],
                            Rating = (int)Math.Round(game.Rating),
                            Genres = genresAndThemes.Select(g => g.ToString()).ToList(),
-                           Tags = genresAndThemes.Select(g => (g.ToString(), 100)).ToList(),
+                           Tags = genresAndThemes.Select(g => new MetadataTag
+                           {
+                               Name = g.ToString(),
+                               Percentage = 100
+                           }).ToList(),
                        };
 
         // Get Japanese title from game_localizations if available (region 3 is Japan)

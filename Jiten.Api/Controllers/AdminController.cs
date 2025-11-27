@@ -72,7 +72,11 @@ public partial class AdminController(
                                     Description = model.Description?.Trim(), Image = coverImagePathOrUrl, Links = new List<Link>(),
                                     Rating = model.Rating,
                                     Genres = model.Genres,
-                                    Tags = model.Tags.Select(t => (t.Name, t.Percentage)).ToList(),
+                                    Tags = model.Tags.Select(t => new Core.Data.Providers.MetadataTag
+                                    {
+                                        Name = t.Name,
+                                        Percentage = t.Percentage
+                                    }).ToList(),
                                     IsAdultOnly = model.IsAdultOnly
                                 };
 

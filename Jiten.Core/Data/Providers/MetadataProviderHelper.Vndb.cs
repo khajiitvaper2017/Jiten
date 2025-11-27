@@ -41,7 +41,11 @@ public static partial class MetadataProviderHelper
         foreach (var requestResult in requestResults)
         {
             bool isAdultOnly = await FetchAdultStatus(requestResult.Id);
-            var tags = requestResult.Tags.Where(t => t.Spoiler == 0).Select(t => (t.Id, (int)(t.Rating * (100d / 3d)))).ToList();
+            var tags = requestResult.Tags.Where(t => t.Spoiler == 0).Select(t => new MetadataTag
+            {
+                Name = t.Id,
+                Percentage = (int)(t.Rating * (100d / 3d))
+            }).ToList();
 
 
             var metadata = new Metadata
@@ -53,7 +57,7 @@ public static partial class MetadataProviderHelper
                                Description = Regex.Replace(requestResult.Description ?? "", @"\[.*\]", ""),
                                Links = [new Link { LinkType = LinkType.Vndb, Url = $"https://vndb.org/{requestResult.Id}" }],
                                Image = requestResult.Image?.Url, Aliases = requestResult.Aliases,
-                               Rating = (int)Math.Round(requestResult.Rating ?? 0), Genres = tags.Select(t => t.Id).ToList(), Tags = tags,
+                               Rating = (int)Math.Round(requestResult.Rating ?? 0), Genres = tags.Select(t => t.Name).ToList(), Tags = tags,
                                IsAdultOnly = isAdultOnly
                            };
 
@@ -94,7 +98,11 @@ public static partial class MetadataProviderHelper
         }
 
         bool isAdultOnly = await FetchAdultStatus(requestResult.Id);
-        var tags = requestResult.Tags.Where(t => t.Spoiler == 0).Select(t => (t.Id, (int)(t.Rating * (100d / 3d)))).ToList();
+        var tags = requestResult.Tags.Where(t => t.Spoiler == 0).Select(t => new MetadataTag
+        {
+            Name = t.Id,
+            Percentage = (int)(t.Rating * (100d / 3d))
+        }).ToList();
 
         return new Metadata
                {
@@ -104,7 +112,7 @@ public static partial class MetadataProviderHelper
                    Description = Regex.Replace(requestResult.Description ?? "", @"\[.*\]", ""),
                    Links = [new Link { LinkType = LinkType.Vndb, Url = $"https://vndb.org/{requestResult.Id}" }],
                    Image = requestResult.Image?.Url, Aliases = requestResult.Aliases, Rating = (int)Math.Round(requestResult.Rating ?? 0),
-                   Genres = tags.Select(t => t.Id).ToList(), Tags = tags, IsAdultOnly = isAdultOnly
+                   Genres = tags.Select(t => t.Name).ToList(), Tags = tags, IsAdultOnly = isAdultOnly
                };
     }
 
