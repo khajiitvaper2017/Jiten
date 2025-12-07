@@ -99,7 +99,7 @@ public class ReaderController(
             List<ReaderToken> tokens = new();
             int currentPosition = 0;
 
-            var knownStates = await currentUserService.GetKnownWordsState(parsedWords.Select(dw => (dw.WordId, dw.ReadingIndex)).ToList(), true);
+            var knownStates = await currentUserService.GetKnownWordsState(parsedWords.Select(dw => (dw.WordId, dw.ReadingIndex)).ToList());
 
             foreach (var word in parsedWords)
             {
@@ -125,7 +125,7 @@ public class ReaderController(
                                          FrequencyRank = frequencyData.TryGetValue(word.WordId, out var freq)
                                              ? freq.ReadingsFrequencyRank[word.ReadingIndex]
                                              : 0,
-                                         KnownState = knownState,
+                                         KnownState = knownState ?? [KnownState.New],
                                      };
                     allWords.Add(readerWord);
 

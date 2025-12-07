@@ -50,12 +50,14 @@ public class UserController(
 
         KnownWordAmountDto dto = new KnownWordAmountDto
                                  {
-                                     Young = statesDistinct.Count(s => s.Value == KnownState.Young),
-                                     YoungForm = states.Count(s => s.Value == KnownState.Young),
-                                     Mature = statesDistinct.Count(s => s.Value == KnownState.Mature),
-                                     MatureForm = states.Count(s => s.Value == KnownState.Mature),
-                                     Blacklisted = statesDistinct.Count(s => s.Value == KnownState.Blacklisted),
-                                     BlacklistedForm = states.Count(s => s.Value == KnownState.Blacklisted)
+                                     Young = statesDistinct.Count(s => s.Value.Contains(KnownState.Young)),
+                                     YoungForm = states.Count(s => s.Value.Contains(KnownState.Young)),
+                                     Mature = statesDistinct.Count(s => s.Value.Contains(KnownState.Mature)),
+                                     MatureForm = states.Count(s => s.Value.Contains(KnownState.Mature)),
+                                     Mastered = statesDistinct.Count(s => s.Value.Contains(KnownState.Mastered)),
+                                     MasteredForm = states.Count(s => s.Value.Contains(KnownState.Mastered)),
+                                     Blacklisted = statesDistinct.Count(s => s.Value.Contains(KnownState.Blacklisted)),
+                                     BlacklistedForm = states.Count(s => s.Value.Contains(KnownState.Blacklisted))
                                  };
 
         return Results.Ok(dto);
@@ -808,20 +810,21 @@ public class UserController(
 
         foreach (var card in cards)
         {
-            switch (knownStates[(card.WordId, card.ReadingIndex)])
+            if (knownStates[(card.WordId, card.ReadingIndex)].Contains(KnownState.Mastered))
             {
-                case KnownState.Mastered:
-                    masteredCards.Add(card);
-                    break;
-                case KnownState.Blacklisted:
-                    blacklistedCards.Add(card);
-                    break;
-                case KnownState.Mature:
-                    matureCards.Add(card);
-                    break;
-                case KnownState.Young:
-                    youngCards.Add(card);
-                    break;
+                masteredCards.Add(card);
+            }
+            if (knownStates[(card.WordId, card.ReadingIndex)].Contains(KnownState.Blacklisted))
+            {
+                blacklistedCards.Add(card);
+            } 
+            if (knownStates[(card.WordId, card.ReadingIndex)].Contains(KnownState.Mature))
+            {
+                matureCards.Add(card);
+            }
+            if (knownStates[(card.WordId, card.ReadingIndex)].Contains(KnownState.Young))
+            {
+                youngCards.Add(card);
             }
         }
 

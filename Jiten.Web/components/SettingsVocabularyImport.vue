@@ -22,13 +22,15 @@
 
   const youngWordsAmount = ref(0);
   const matureWordsAmount = ref(0);
+  const masteredWordsAmount = ref(0);
   const blacklistedWordsAmount = ref(0);
   const youngFormsAmount = ref(0);
   const matureFormsAmount = ref(0);
+  const masteredFormsAmount = ref(0);
   const blacklistedFormsAmount = ref(0);
 
-  const totalWordsAmount = computed(() => youngWordsAmount.value + matureWordsAmount.value + blacklistedWordsAmount.value);
-  const totalFormsAmount = computed(() => youngFormsAmount.value + matureFormsAmount.value + blacklistedFormsAmount.value);
+  const totalWordsAmount = computed(() => youngWordsAmount.value + matureWordsAmount.value + masteredWordsAmount.value + blacklistedWordsAmount.value);
+  const totalFormsAmount = computed(() => youngFormsAmount.value + matureFormsAmount.value + masteredFormsAmount.value + blacklistedFormsAmount.value);
 
   onMounted(async () => {
     await fetchKnownWordsAmount();
@@ -36,14 +38,23 @@
 
   async function fetchKnownWordsAmount() {
     try {
-      const result = await $api<{ young: number; mature: number; blacklisted: number; youngForm: number; matureForm: number; blacklistedForm: number }>(
-        'user/vocabulary/known-ids/amount'
-      );
+      const result = await $api<{
+        young: number;
+        mature: number;
+        mastered: number;
+        blacklisted: number;
+        youngForm: number;
+        matureForm: number;
+        masteredForm: number;
+        blacklistedForm: number;
+      }>('user/vocabulary/known-ids/amount');
       youngWordsAmount.value = result.young;
       matureWordsAmount.value = result.mature;
+      masteredWordsAmount.value = result.mastered;
       blacklistedWordsAmount.value = result.blacklisted;
       youngFormsAmount.value = result.youngForm;
       matureFormsAmount.value = result.matureForm;
+      masteredFormsAmount.value = result.masteredForm;
       blacklistedFormsAmount.value = result.blacklistedForm;
     } catch {}
   }
@@ -67,9 +78,11 @@
 
           youngWordsAmount.value = 0;
           matureWordsAmount.value = 0;
+          masteredWordsAmount.value = 0;
           blacklistedWordsAmount.value = 0;
           youngFormsAmount.value = 0;
           matureFormsAmount.value = 0;
+          masteredFormsAmount.value = 0;
           blacklistedFormsAmount.value = 0;
         } catch (e) {
           console.error(e);
@@ -389,12 +402,12 @@
         exportMastered: exportMastered.value.toString(),
         exportMature: exportMature.value.toString(),
         exportYoung: exportYoung.value.toString(),
-        exportBlacklisted: exportBlacklisted.value.toString()
+        exportBlacklisted: exportBlacklisted.value.toString(),
       });
 
       const response = await fetch(`${config.public.baseURL}user/vocabulary/export-words?${params}`, {
         method: 'GET',
-        headers: { 'Authorization': `Bearer ${authStore.accessToken}` }
+        headers: { Authorization: `Bearer ${authStore.accessToken}` },
       });
 
       if (!response.ok) throw new Error('Failed to export vocabulary');
@@ -516,6 +529,10 @@
             <span class="font-extrabold text-green-600 dark:text-green-300">{{ matureWordsAmount }}</span> are mature (<b>{{ matureFormsAmount }}</b> forms).
           </li>
           <li>
+            <span class="font-extrabold text-green-600 dark:text-green-300">{{ masteredWordsAmount }}</span> are mastered (<b>{{ masteredFormsAmount }}</b>
+            forms).
+          </li>
+          <li>
             <span class="font-extrabold text-gray-600 dark:text-gray-300">{{ blacklistedWordsAmount }}</span> are blacklisted (<b>{{
               blacklistedFormsAmount
             }}</b>
@@ -527,13 +544,7 @@
         <p class="mb-3">You can upload a list of known words to calculate coverage and exclude them from downloads using one of the options below.</p>
         <div class="mt-3">
           <NuxtLink to="/settings/cards">
-            <Button
-              icon="pi pi-table"
-              label="View All Words"
-              severity="info"
-              outlined
-              class="w-full md:w-auto"
-            />
+            <Button icon="pi pi-table" label="View All Words" severity="info" outlined class="w-full md:w-auto" />
           </NuxtLink>
         </div>
       </template>
@@ -625,9 +636,7 @@
               <Checkbox id="exportKanaOnly" v-model="exportKanaOnly" :binary="true" />
               <label for="exportKanaOnly" class="ml-2">
                 <span>Export <strong>kana only</strong> words</span>
-                <span class="text-sm text-gray-600 dark:text-gray-400 block">
-                  Include words that are written entirely in hiragana or katakana
-                </span>
+                <span class="text-sm text-gray-600 dark:text-gray-400 block"> Include words that are written entirely in hiragana or katakana </span>
               </label>
             </div>
 
@@ -642,9 +651,7 @@
               <Checkbox id="exportMature" v-model="exportMature" :binary="true" />
               <label for="exportMature" class="ml-2">
                 <span>Export <strong>mature</strong> words</span>
-                <span class="text-sm text-gray-600 dark:text-gray-400 block">
-                  Cards in review with interval ≥ 21 days
-                </span>
+                <span class="text-sm text-gray-600 dark:text-gray-400 block"> Cards in review with interval ≥ 21 days </span>
               </label>
             </div>
 
@@ -652,9 +659,7 @@
               <Checkbox id="exportYoung" v-model="exportYoung" :binary="true" />
               <label for="exportYoung" class="ml-2">
                 <span>Export <strong>young</strong> words</span>
-                <span class="text-sm text-gray-600 dark:text-gray-400 block">
-                  New, learning, relearning, or review with interval &lt; 21 days
-                </span>
+                <span class="text-sm text-gray-600 dark:text-gray-400 block"> New, learning, relearning, or review with interval &lt; 21 days </span>
               </label>
             </div>
 
@@ -666,13 +671,7 @@
             </div>
           </div>
 
-          <Button
-            icon="pi pi-download"
-            label="Export Words"
-            :loading="exportWordsLoading"
-            class="w-full md:w-auto"
-            @click="exportWords"
-          />
+          <Button icon="pi pi-download" label="Export Words" :loading="exportWordsLoading" class="w-full md:w-auto" @click="exportWords" />
         </div>
       </template>
     </Card>

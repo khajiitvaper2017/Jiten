@@ -836,7 +836,7 @@ public class MediaDeckController(
             var allDeckWords = await query.ToListAsync();
             var deckWordKeys = allDeckWords.Select(dw => (dw.WordId, dw.ReadingIndex)).ToList();
 
-            var knownStates = await currentUserService.GetKnownWordsState(deckWordKeys, getDue: false);
+            var knownStates = await currentUserService.GetKnownWordsState(deckWordKeys);
 
             var distinctWordIds = deckWordKeys.Select(k => k.WordId).Distinct().ToList();
             var fsrsStates = await userContext.FsrsCards
@@ -850,16 +850,16 @@ public class MediaDeckController(
             query = query.AsEnumerable().Where(dw =>
             {
                 var key = (dw.WordId, dw.ReadingIndex);
-                var knownState = knownStates.GetValueOrDefault(key, KnownState.New);
+                var knownState = knownStates.GetValueOrDefault(key, [KnownState.New]);
                 var fsrsState = fsrsStates.GetValueOrDefault(key);
 
                 return displayFilter switch
                 {
-                    "known" => knownState != KnownState.New && fsrsStates.ContainsKey(key),
-                    "young" => knownState == KnownState.Young,
-                    "mature" => knownState == KnownState.Mature && fsrsState != FsrsState.Mastered,
-                    "mastered" => fsrsState == FsrsState.Mastered,
-                    "blacklisted" => knownState == KnownState.Blacklisted,
+                    "known" => !knownState.Contains(KnownState.New) && fsrsStates.ContainsKey(key),
+                    "young" => knownState.Contains(KnownState.Young),
+                    "mature" => knownState.Contains(KnownState.Mature),
+                    "mastered" => knownState.Contains(KnownState.Mastered),
+                    "blacklisted" => knownState.Contains(KnownState.Blacklisted),
                     "unknown" => !fsrsStates.ContainsKey(key),
                     _ => true
                 };
