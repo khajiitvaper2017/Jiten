@@ -814,7 +814,7 @@ namespace Jiten.Parser
 
             // Reading selection
             // Distinguishes betsween katakana readings, tries to filter out long vowel, etc
-            
+
             var readings = bestMatch.word.Readings.ToList();
             var targetHiragana = bestMatch.form.Text;
             var originalText = wordData.wordInfo.Text;
@@ -873,7 +873,7 @@ namespace Jiten.Parser
                                 };
 
             return (true, deckWord);
-            
+
             static int GetCommonPrefixLength(string s1, string s2)
             {
                 int len = Math.Min(s1.Length, s2.Length);
@@ -883,8 +883,60 @@ namespace Jiten.Parser
                     if (s1[i] == s2[i]) match++;
                     else break;
                 }
+
                 return match;
             }
+        }
+
+        public static async Task<List<DeckWord>> GetWordsDirectLookup(IDbContextFactory<JitenDbContext> contextFactory, List<string> words)
+        {
+            _contextFactory = contextFactory;
+            if (!_initialized)
+            {
+                await _initSemaphore.WaitAsync();
+                try
+                {
+                    if (!_initialized) // Double-check to avoid race conditions
+                    {
+                        await InitDictionaries();
+                        _initialized = true;
+                    }
+                }
+                finally
+                {
+                    _initSemaphore.Release();
+                }
+            }
+
+            List<DeckWord> matchedWords = new();
+
+            foreach (var word in words)
+            {
+                var wordInHiragana = WanaKana.ToHiragana(word, new DefaultOptions() { ConvertLongVowelMark = false, });
+                var wordNormalized = KanaNormalizer.Normalize(wordInHiragana);
+                var matchesIds = _lookups.Where(l => l.Key == wordNormalized).SelectMany(l => l.Value).ToList();
+
+                if (!matchesIds.Any())
+                    continue;
+
+                var wordCache = await JmDictCache.GetWordsAsync(matchesIds);
+                List<JmDictWord> matches = new();
+
+                foreach (var id in matchesIds)
+                {
+                    if (!wordCache.TryGetValue(id, out var match)) continue;
+                    if (match.Readings.Any(r => r == word))
+                        matches.Add(match);
+                }
+
+                var bestMatch = matches.OrderByDescending(m => m.GetPriorityScore(WanaKana.IsKana(word))).First();
+                matchedWords.Add(new DeckWord()
+                                 {
+                                     WordId = bestMatch.WordId, ReadingIndex = (byte)bestMatch.Readings.IndexOf(word), OriginalText = word
+                                 });
+            }
+
+            return matchedWords;
         }
     }
 }
