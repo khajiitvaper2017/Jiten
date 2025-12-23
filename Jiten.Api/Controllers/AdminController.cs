@@ -562,6 +562,15 @@ public partial class AdminController(
         logger.LogInformation("Admin queued recompute frequencies job");
         return Ok(new { Message = "Recomputing frequencies job has been queued" });
     }
+    
+    [HttpPost("recompute-kanji-frequencies")]
+    public IActionResult RecomputeKanjiFrequencies()
+    {
+        backgroundJobs.Enqueue<ComputationJob>(job => job.RecomputeKanjiFrequencies());
+
+        logger.LogInformation("Admin queued recompute kanji frequencies job");
+        return Ok(new { Message = "Recomputing kanji frequencies job has been queued" });
+    }
 
     [HttpPost("recompute-coverages")]
     public async Task<IActionResult> RecomputeUserCoverages()
