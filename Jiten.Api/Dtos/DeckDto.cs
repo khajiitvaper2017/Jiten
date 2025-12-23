@@ -156,7 +156,7 @@ public class DeckDto
 public class DeckRelationshipDto
 {
     public int TargetDeckId { get; set; }
-    public string TargetTitle { get; set; } = string.Empty;
+    public DeckDto TargetDeck { get; set; } = new();
     public DeckRelationshipType RelationshipType { get; set; }
     public bool IsInverse { get; set; }
 
@@ -167,7 +167,7 @@ public class DeckRelationshipDto
         var direct = asSource.Select(r => new DeckRelationshipDto
         {
             TargetDeckId = r.TargetDeckId,
-            TargetTitle = r.TargetDeck.OriginalTitle,
+            TargetDeck = new DeckDto(r.TargetDeck),
             RelationshipType = r.RelationshipType,
             IsInverse = false
         });
@@ -175,7 +175,7 @@ public class DeckRelationshipDto
         var inverse = asTarget.Select(r => new DeckRelationshipDto
         {
             TargetDeckId = r.SourceDeckId,
-            TargetTitle = r.SourceDeck.OriginalTitle,
+            TargetDeck = new DeckDto(r.SourceDeck),
             RelationshipType = DeckRelationship.GetInverse(r.RelationshipType),
             IsInverse = true
         });

@@ -76,7 +76,7 @@ export interface TagWithPercentage {
 
 export interface DeckRelationship {
   targetDeckId: number;
-  targetTitle: string;
+  targetDeck: Deck;
   relationshipType: DeckRelationshipType;
   isInverse: boolean;
 }

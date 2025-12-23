@@ -177,7 +177,7 @@
       class="px-2 py-0.5 bg-surface-100 dark:bg-surface-900/50 text-surface-700 dark:text-surface-200 rounded-full text-xs hover:bg-surface-200 dark:hover:bg-surface-800/50 transition-colors"
     >
       <span class="font-medium">{{ getRelationshipTypeLabel(rel.relationshipType) }}:</span>
-      <span class="ml-1">{{ rel.targetTitle }}</span>
+      <span class="ml-1">{{ localiseTitle(rel.targetDeck) }}</span>
     </NuxtLink>
 
     <Tag
