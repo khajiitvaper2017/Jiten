@@ -205,6 +205,8 @@ public partial class AdminController(
                             .ThenInclude(dt => dt.Tag)
                             .Include(d => d.RelationshipsAsSource)
                             .ThenInclude(r => r.TargetDeck)
+                            .Include(d => d.RelationshipsAsTarget)
+                            .ThenInclude(r => r.SourceDeck)
                             .FirstOrDefault(d => d.DeckId == id);
 
         if (deck == null)
@@ -216,12 +218,7 @@ public partial class AdminController(
             .OrderBy(dw => dw.DeckOrder);
 
         var mainDeckDto = new DeckDto(deck);
-        mainDeckDto.Relationships = deck.RelationshipsAsSource.Select(r => new DeckRelationshipDto
-        {
-            TargetDeckId = r.TargetDeckId,
-            TargetTitle = r.TargetDeck.OriginalTitle,
-            RelationshipType = r.RelationshipType
-        }).ToList();
+        mainDeckDto.Relationships = DeckRelationshipDto.FromDeck(deck.RelationshipsAsSource, deck.RelationshipsAsTarget);
 
         List<DeckDto> subDeckDtos = new();
 
@@ -433,8 +430,13 @@ public partial class AdminController(
         // Update relationships
         if (model.Relationships != null && model.Relationships.Any())
         {
+            // Filter out inverse relationships from the input (only accept direct/primary relationships)
+            var primaryRelationships = model.Relationships
+                .Where(r => DeckRelationship.IsPrimaryRelationship(r.RelationshipType))
+                .ToList();
+
             var existingRelationships = deck.RelationshipsAsSource.ToList();
-            var newRelationshipKeys = model.Relationships
+            var newRelationshipKeys = primaryRelationships
                 .Select(r => (r.TargetDeckId, r.RelationshipType))
                 .ToHashSet();
 
@@ -452,17 +454,27 @@ public partial class AdminController(
                 .Select(r => (r.TargetDeckId, r.RelationshipType))
                 .ToHashSet();
 
-            foreach (var rel in model.Relationships)
+            foreach (var rel in primaryRelationships)
             {
-                if (!existingKeys.Contains((rel.TargetDeckId, rel.RelationshipType)))
+                if (existingKeys.Contains((rel.TargetDeckId, rel.RelationshipType)))
+                    continue;
+
+                // Check if the inverse relationship already exists
+                var inverseType = DeckRelationship.GetInverse(rel.RelationshipType);
+                var inverseExists = await dbContext.DeckRelationships.AnyAsync(r =>
+                    r.SourceDeckId == rel.TargetDeckId &&
+                    r.TargetDeckId == deck.DeckId &&
+                    r.RelationshipType == inverseType);
+
+                if (inverseExists)
+                    continue;
+
+                deck.RelationshipsAsSource.Add(new DeckRelationship
                 {
-                    deck.RelationshipsAsSource.Add(new DeckRelationship
-                    {
-                        SourceDeckId = deck.DeckId,
-                        TargetDeckId = rel.TargetDeckId,
-                        RelationshipType = rel.RelationshipType
-                    });
-                }
+                    SourceDeckId = deck.DeckId,
+                    TargetDeckId = rel.TargetDeckId,
+                    RelationshipType = rel.RelationshipType
+                });
             }
         }
         else if (model.Relationships != null)

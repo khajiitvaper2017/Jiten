@@ -78,6 +78,7 @@ export interface DeckRelationship {
   targetDeckId: number;
   targetTitle: string;
   relationshipType: DeckRelationshipType;
+  isInverse: boolean;
 }
 
 export interface MetadataTag {

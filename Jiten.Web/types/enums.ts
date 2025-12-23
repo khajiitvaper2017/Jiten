@@ -134,15 +134,16 @@ export enum FsrsRating {
 
 export enum DeckRelationshipType {
   Sequel = 1,
-  Prequel = 2,
-  Fandisc = 3,
-  Spinoff = 4,
-  SideStory = 5,
-  Adaptation = 6,
-  Alternative = 7,
-  // Inverses
-  HasFandisc = 103,
-  HasSpinoff = 104,
-  HasSideStory = 105,
-  SourceMaterial = 106,
+  Fandisc = 2,
+  Spinoff = 3,
+  SideStory = 4,
+  Adaptation = 5,
+  Alternative = 6,
+
+  // Inverse relationships
+  Prequel = 101,
+  HasFandisc = 102,
+  HasSpinoff = 103,
+  HasSideStory = 104,
+  SourceMaterial = 105
 }

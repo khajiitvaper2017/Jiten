@@ -84,6 +84,7 @@
     targetDeckId: number;
     targetTitle: string;
     relationshipType: DeckRelationshipType;
+    isInverse: boolean;
   }>>([]);
   const showAddRelationshipDialog = ref(false);
   const newRelationship = ref<{
@@ -91,19 +92,30 @@
     targetTitle: string;
     relationshipType: DeckRelationshipType | null;
   }>({ targetDeckId: null, targetTitle: '', relationshipType: null });
-  const deckSearchQuery = ref('');
-  const deckSearchResults = ref<Array<{ deckId: number; originalTitle: string }>>([]);
-  const searchingDecks = ref(false);
+  const fetchingDeckTitle = ref(false);
 
   const relationshipTypeOptions = [
     { label: 'Sequel', value: DeckRelationshipType.Sequel },
-    { label: 'Prequel', value: DeckRelationshipType.Prequel },
     { label: 'Fandisc', value: DeckRelationshipType.Fandisc },
     { label: 'Spinoff', value: DeckRelationshipType.Spinoff },
     { label: 'Side Story', value: DeckRelationshipType.SideStory },
     { label: 'Adaptation', value: DeckRelationshipType.Adaptation },
     { label: 'Alternative', value: DeckRelationshipType.Alternative },
   ];
+
+  const relationshipTypeLabels: Record<DeckRelationshipType, string> = {
+    [DeckRelationshipType.Sequel]: 'Sequel',
+    [DeckRelationshipType.Fandisc]: 'Fandisc',
+    [DeckRelationshipType.Spinoff]: 'Spinoff',
+    [DeckRelationshipType.SideStory]: 'Side Story',
+    [DeckRelationshipType.Adaptation]: 'Adaptation',
+    [DeckRelationshipType.Alternative]: 'Alternative',
+    [DeckRelationshipType.Prequel]: 'Prequel',
+    [DeckRelationshipType.HasFandisc]: 'Has Fandisc',
+    [DeckRelationshipType.HasSpinoff]: 'Has Spinoff',
+    [DeckRelationshipType.HasSideStory]: 'Has Side Story',
+    [DeckRelationshipType.SourceMaterial]: 'Source Material',
+  };
 
   const newSubdeckUploaderRef = ref<InstanceType<typeof FileUpload> | null>(null);
 
@@ -188,7 +200,8 @@
       relationships.value = mainDeck.relationships?.map(r => ({
         targetDeckId: r.targetDeckId,
         targetTitle: r.targetTitle,
-        relationshipType: r.relationshipType
+        relationshipType: r.relationshipType,
+        isInverse: r.isInverse
       })) || [];
 
       loadAvailableTags();
@@ -336,42 +349,43 @@
   }
 
   // Relationship functions
-  async function searchDecks() {
-    if (deckSearchQuery.value.length < 2) {
-      deckSearchResults.value = [];
+  async function fetchDeckTitle() {
+    if (!newRelationship.value.targetDeckId) {
+      showToast('warn', 'Validation', 'Please enter a deck ID');
       return;
     }
-    searchingDecks.value = true;
+
+    if (newRelationship.value.targetDeckId === parseInt(mediaId as string)) {
+      showToast('warn', 'Validation', 'Cannot add a relationship to itself');
+      newRelationship.value.targetTitle = '';
+      return;
+    }
+
+    fetchingDeckTitle.value = true;
     try {
-      const results = await $api<Array<{ deckId: number; originalTitle: string }>>(
-        `decks/search?query=${encodeURIComponent(deckSearchQuery.value)}&limit=10`
-      );
-      deckSearchResults.value = results
-        .filter(d => d.deckId !== parseInt(mediaId as string))
-        .map(d => ({ deckId: d.deckId, originalTitle: d.originalTitle }));
+      const result = await $api<{ mainDeck: { originalTitle: string } }>(`admin/deck/${newRelationship.value.targetDeckId}`);
+      newRelationship.value.targetTitle = result.mainDeck.originalTitle;
     } catch (error) {
-      console.error('Error searching decks:', error);
-      deckSearchResults.value = [];
+      showToast('error', 'Error', 'Deck not found');
+      newRelationship.value.targetTitle = '';
     } finally {
-      searchingDecks.value = false;
+      fetchingDeckTitle.value = false;
     }
   }
 
   function openAddRelationshipDialog() {
     newRelationship.value = { targetDeckId: null, targetTitle: '', relationshipType: null };
-    deckSearchQuery.value = '';
-    deckSearchResults.value = [];
     showAddRelationshipDialog.value = true;
-  }
-
-  function selectDeckForRelationship(deck: { deckId: number; originalTitle: string }) {
-    newRelationship.value.targetDeckId = deck.deckId;
-    newRelationship.value.targetTitle = deck.originalTitle;
   }
 
   function addRelationship() {
     if (!newRelationship.value.targetDeckId || !newRelationship.value.relationshipType) {
       showToast('warn', 'Validation', 'Please select a deck and relationship type');
+      return;
+    }
+
+    if (!newRelationship.value.targetTitle) {
+      showToast('warn', 'Validation', 'Please verify the deck ID first');
       return;
     }
 
@@ -387,7 +401,8 @@
     relationships.value.push({
       targetDeckId: newRelationship.value.targetDeckId,
       targetTitle: newRelationship.value.targetTitle,
-      relationshipType: newRelationship.value.relationshipType
+      relationshipType: newRelationship.value.relationshipType,
+      isInverse: false
     });
     showAddRelationshipDialog.value = false;
   }
@@ -397,7 +412,7 @@
   }
 
   function getRelationshipTypeLabel(type: DeckRelationshipType): string {
-    return relationshipTypeOptions.find(o => o.value === type)?.label ?? 'Unknown';
+    return relationshipTypeLabels[type] ?? 'Unknown';
   }
 
   function moveSubdeckToPosition(id: number, targetPosition: number | null) {
@@ -571,8 +586,9 @@
         formData.append(`tags[${index}].percentage`, tag.percentage.toString());
       });
 
-      // Add relationships
-      relationships.value.forEach((rel, index) => {
+      // Add relationships (only direct, not inverse - inverse are computed from other deck's data)
+      const directRelationships = relationships.value.filter(r => !r.isInverse);
+      directRelationships.forEach((rel, index) => {
         formData.append(`relationships[${index}].targetDeckId`, rel.targetDeckId.toString());
         formData.append(`relationships[${index}].relationshipType`, rel.relationshipType.toString());
       });
@@ -975,18 +991,21 @@
             <ul v-else class="list-none p-0 space-y-2">
               <li
                 v-for="(rel, index) in relationships"
-                :key="`${rel.targetDeckId}-${rel.relationshipType}`"
+                :key="`${rel.targetDeckId}-${rel.relationshipType}-${rel.isInverse}`"
                 class="flex justify-between items-center p-3 border rounded"
+                :class="{ 'opacity-75': rel.isInverse }"
               >
                 <div>
                   <span class="font-medium">{{ getRelationshipTypeLabel(rel.relationshipType) }}:</span>
                   <NuxtLink :to="`/decks/media/${rel.targetDeckId}/detail`" class="ml-2 text-primary hover:underline">
                     {{ rel.targetTitle }}
                   </NuxtLink>
+                  <span v-if="rel.isInverse" class="ml-2 text-xs text-gray-500">(inverse)</span>
                 </div>
-                <Button severity="danger" text @click="removeRelationship(index)">
+                <Button v-if="!rel.isInverse" severity="danger" text @click="removeRelationship(index)">
                   <Icon name="material-symbols-light:delete" size="1.5em" />
                 </Button>
+                <span v-else class="text-xs text-gray-400 italic">Edit on target deck</span>
               </li>
             </ul>
           </template>
@@ -1007,35 +1026,26 @@
               />
             </div>
             <div class="mb-4">
-              <label class="block text-sm font-medium mb-2">Target Deck</label>
-              <InputText
-                v-model="deckSearchQuery"
-                placeholder="Search for a deck..."
-                class="w-full"
-                @input="searchDecks"
-              />
-              <div v-if="searchingDecks" class="mt-2 text-gray-500">
-                Searching...
+              <label class="block text-sm font-medium mb-2">Target Deck ID</label>
+              <div class="flex gap-2">
+                <InputNumber
+                  v-model="newRelationship.targetDeckId"
+                  placeholder="Enter deck ID"
+                  class="flex-1"
+                  :use-grouping="false"
+                />
+                <Button @click="fetchDeckTitle" :loading="fetchingDeckTitle" :disabled="!newRelationship.targetDeckId">
+                  Verify
+                </Button>
               </div>
-              <div v-else-if="deckSearchResults.length > 0" class="mt-2 border rounded max-h-48 overflow-y-auto">
-                <div
-                  v-for="deck in deckSearchResults"
-                  :key="deck.deckId"
-                  class="p-2 cursor-pointer hover:bg-surface-100 dark:hover:bg-surface-700"
-                  :class="{ 'bg-primary-100 dark:bg-primary-900': newRelationship.targetDeckId === deck.deckId }"
-                  @click="selectDeckForRelationship(deck)"
-                >
-                  {{ deck.originalTitle }}
-                </div>
-              </div>
-              <div v-if="newRelationship.targetDeckId" class="mt-2 p-2 bg-surface-100 dark:bg-surface-800 rounded">
-                Selected: <strong>{{ newRelationship.targetTitle }}</strong>
+              <div v-if="newRelationship.targetTitle" class="mt-2 p-2 bg-surface-100 dark:bg-surface-800 rounded">
+                Deck: <strong>{{ newRelationship.targetTitle }}</strong>
               </div>
             </div>
           </div>
           <template #footer>
             <Button label="Cancel" severity="secondary" text @click="showAddRelationshipDialog = false" />
-            <Button label="Add" @click="addRelationship" :disabled="!newRelationship.targetDeckId || !newRelationship.relationshipType" />
+            <Button label="Add" @click="addRelationship" :disabled="!newRelationship.targetDeckId || !newRelationship.relationshipType || !newRelationship.targetTitle" />
           </template>
         </Dialog>
 
