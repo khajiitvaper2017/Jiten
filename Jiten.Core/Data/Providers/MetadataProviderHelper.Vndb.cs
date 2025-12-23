@@ -151,11 +151,11 @@ public static partial class MetadataProviderHelper
             "seq" => (DeckRelationshipType.Sequel, false),
             "preq" => (DeckRelationshipType.Sequel, true),
             "alt" => (DeckRelationshipType.Alternative, false),
-            "side" => (DeckRelationshipType.SideStory, false),
-            "par" => (DeckRelationshipType.SideStory, true),
-            "fan" => (DeckRelationshipType.Fandisc, false),
-            "orig" => (DeckRelationshipType.Adaptation, true),
-            _ => null  // Ignore: set, char, ser
+            "side" => (DeckRelationshipType.SideStory, true),
+            "par" => (DeckRelationshipType.SideStory, false),
+            "orig" => (DeckRelationshipType.Fandisc, false),
+            "fan" => (DeckRelationshipType.Fandisc, true),
+            _ => null 
         };
     }
 
