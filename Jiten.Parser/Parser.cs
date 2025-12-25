@@ -19,6 +19,7 @@ namespace Jiten.Parser
         private static readonly SemaphoreSlim _initSemaphore = new SemaphoreSlim(1, 1);
 
         private static readonly bool UseCache = true;
+        private static readonly bool UseRescue = true;
         private static IDeckWordCache DeckWordCache;
         private static IJmDictCache JmDictCache;
 
@@ -118,18 +119,39 @@ namespace Jiten.Parser
             Deconjugator deconjugator = Deconjugator.Instance;
 
             const int BATCH_SIZE = 1000;
-            List<DeckWord> allProcessedWords = new List<DeckWord>();
+            List<DeckWord?> allProcessedWords = new();
+            List<(int index, WordInfo wordInfo)> failedWords = new();
 
+            int globalIndex = 0;
             for (int i = 0; i < wordInfos.Count; i += BATCH_SIZE)
             {
                 var batch = wordInfos.Skip(i).Take(BATCH_SIZE).ToList();
                 var processBatch = batch.Select(word => ProcessWord((word, 0), deconjugator)).ToList();
                 var batchResults = await Task.WhenAll(processBatch);
 
-                allProcessedWords.AddRange(batchResults.Where(result => result != null).Select(result => result!));
+                for (int j = 0; j < batch.Count; j++)
+                {
+                    allProcessedWords.Add(batchResults[j]);
+                    if (batchResults[j] == null)
+                        failedWords.Add((globalIndex, batch[j]));
+                    globalIndex++;
+                }
             }
 
-            return allProcessedWords;
+            if (UseRescue && failedWords.Count > 0)
+            {
+                var rescueInput = failedWords.Select(f => (f.wordInfo, 0)).ToList();
+                var rescuedGroups = await RescueFailedWords(rescueInput, deconjugator);
+
+                for (int i = failedWords.Count - 1; i >= 0; i--)
+                {
+                    var (index, _) = failedWords[i];
+                    allProcessedWords.RemoveAt(index);
+                    allProcessedWords.InsertRange(index, rescuedGroups[i]);
+                }
+            }
+
+            return allProcessedWords.Where(w => w != null).Select(w => w!).ToList();
         }
 
         public static async Task<Deck> ParseTextToDeck(IDbContextFactory<JitenDbContext> contextFactory, string text,
@@ -199,18 +221,41 @@ namespace Jiten.Parser
             timer.Restart();
 
             const int BATCH_SIZE = 1000;
-            List<DeckWord> allProcessedWords = new List<DeckWord>();
+            List<DeckWord?> allProcessedWords = new();
+            List<(int index, WordInfo wordInfo, int occurrences)> failedWords = new();
 
+            int globalIndex = 0;
             for (int i = 0; i < uniqueWords.Count; i += BATCH_SIZE)
             {
                 var batch = uniqueWords.Skip(i).Take(BATCH_SIZE).ToList();
                 var processBatch = batch.Select(word => ProcessWord(word, deconjugator)).ToList();
                 var batchResults = await Task.WhenAll(processBatch);
 
-                allProcessedWords.AddRange(batchResults.Where(result => result != null).Select(result => result!));
+                for (int j = 0; j < batch.Count; j++)
+                {
+                    allProcessedWords.Add(batchResults[j]);
+                    if (batchResults[j] == null)
+                        failedWords.Add((globalIndex, batch[j].wordInfo, batch[j].occurrences));
+                    globalIndex++;
+                }
             }
 
-            var processedWords = allProcessedWords.ToArray();
+            if (UseRescue && failedWords.Count > 0)
+            {
+                var rescueInput = failedWords.Select(f => (f.wordInfo, f.occurrences)).ToList();
+                var rescuedGroups = await RescueFailedWords(rescueInput, deconjugator);
+
+                for (int i = failedWords.Count - 1; i >= 0; i--)
+                {
+                    var (index, _, _) = failedWords[i];
+                    var rescuedGroup = rescuedGroups[i];
+
+                    allProcessedWords.RemoveAt(index);
+                    allProcessedWords.InsertRange(index, rescuedGroup);
+                }
+            }
+
+            var processedWords = allProcessedWords.Where(w => w != null).Select(w => w!).ToArray();
 
             processedWords = processedWords
                              .Select(result => result)
@@ -374,7 +419,7 @@ namespace Jiten.Parser
                     {
                         var cachedWord = await DeckWordCache.GetAsync(cacheKey);
 
-                        if (cachedWord != null)
+                        if (cachedWord != null && cachedWord.WordId != -1)
                         {
                             return new DeckWord
                                    {
@@ -951,5 +996,144 @@ namespace Jiten.Parser
 
             return matchedWords;
         }
+
+        private static async Task<List<List<DeckWord>>> RescueFailedWords(
+            List<(WordInfo wordInfo, int occurrences)> failedWords,
+            Deconjugator deconjugator)
+        {
+            var groupedResults = failedWords.Select(_ => new List<DeckWord>()).ToList();
+
+            var potentialCandidates = failedWords
+                .Select((w, idx) => (w, idx))
+                // .Where(x => x.w.wordInfo.Text.Length > 1 && x.w.wordInfo.Text.Any(IsKanji) || x.w.wordInfo.Text.Length > 4)
+                .ToList();
+
+            if (potentialCandidates.Count == 0)
+                return groupedResults;
+
+            // Filter out candidates that have already been attempted (cached with WordId = -1)
+            var rescueCandidates = new List<((WordInfo wordInfo, int occurrences) w, int idx)>();
+            if (UseCache)
+            {
+                foreach (var candidate in potentialCandidates)
+                {
+                    var cacheKey = new DeckWordCacheKey(
+                        candidate.w.wordInfo.Text,
+                        candidate.w.wordInfo.PartOfSpeech,
+                        candidate.w.wordInfo.DictionaryForm
+                    );
+
+                    try
+                    {
+                        var cached = await DeckWordCache.GetAsync(cacheKey);
+                        if (cached != null && cached.WordId == -1)
+                            continue; // Already attempted rescue, skip
+                    }
+                    catch
+                    {
+                        // Cache read failed, proceed with rescue attempt
+                    }
+
+                    rescueCandidates.Add(candidate);
+                }
+            }
+            else
+            {
+                rescueCandidates = potentialCandidates;
+            }
+
+            if (rescueCandidates.Count == 0)
+                return groupedResults;
+
+            var combinedText = string.Join("|", rescueCandidates.Select(x => x.w.wordInfo.Text));
+
+            var analyser = new MorphologicalAnalyser();
+            var sentences = await analyser.Parse(combinedText, morphemesOnly: true);
+            var allWords = sentences.SelectMany(s => s.Words).Select(w => w.word).ToList();
+
+            int candidateIdx = 0;
+            var currentGroup = new List<WordInfo>();
+
+            foreach (var word in allWords)
+            {
+                if (word.Text == "|")
+                {
+                    if (candidateIdx < rescueCandidates.Count)
+                    {
+                        var (original, originalIdx) = rescueCandidates[candidateIdx];
+                        var processed = await ProcessRescueGroup(currentGroup, original, deconjugator);
+                        groupedResults[originalIdx] = processed;
+
+                        // Only cache the rescue marker if rescue failed (no results)
+                        if (UseCache && processed.Count == 0)
+                            await CacheRescueMarker(original.wordInfo);
+                    }
+                    currentGroup.Clear();
+                    candidateIdx++;
+                }
+                else
+                {
+                    currentGroup.Add(word);
+                }
+            }
+
+            if (currentGroup.Count > 0 && candidateIdx < rescueCandidates.Count)
+            {
+                var (original, originalIdx) = rescueCandidates[candidateIdx];
+                var processed = await ProcessRescueGroup(currentGroup, original, deconjugator);
+                groupedResults[originalIdx] = processed;
+
+                // Only cache the rescue marker if rescue failed (no results)
+                if (UseCache && processed.Count == 0)
+                    await CacheRescueMarker(original.wordInfo);
+            }
+
+            return groupedResults;
+        }
+
+        private static async Task CacheRescueMarker(WordInfo wordInfo)
+        {
+            try
+            {
+                var cacheKey = new DeckWordCacheKey(
+                    wordInfo.Text,
+                    wordInfo.PartOfSpeech,
+                    wordInfo.DictionaryForm
+                );
+
+                await DeckWordCache.SetAsync(cacheKey,
+                    new DeckWord { WordId = -1, OriginalText = wordInfo.Text },
+                    CommandFlags.FireAndForget);
+            }
+            catch
+            {
+                // Cache write failed, ignore
+            }
+        }
+
+        private static async Task<List<DeckWord>> ProcessRescueGroup(
+            List<WordInfo> group,
+            (WordInfo wordInfo, int occurrences) original,
+            Deconjugator deconjugator)
+        {
+            var results = new List<DeckWord>();
+
+            if (group.Count == 0)
+                return results;
+
+            if (group.Count == 1 && group[0].Text == original.wordInfo.Text)
+                return results;
+
+            foreach (var splitWord in group)
+            {
+                var processed = await ProcessWord((splitWord, original.occurrences), deconjugator);
+                if (processed != null)
+                    results.Add(processed);
+            }
+
+            return results;
+        }
+
+        private static bool IsKanji(char c) => c >= '\u4E00' && c <= '\u9FAF';
     }
 }

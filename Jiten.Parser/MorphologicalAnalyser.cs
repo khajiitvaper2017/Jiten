@@ -399,121 +399,118 @@ public class MorphologicalAnalyser
 
     /// <summary>
     /// Combines inflected verb/adjective forms by verifying with the Deconjugator.
+    /// Uses a forward-rolling strategy to handle suffixes that change the dictionary base (e.g. わかる + かね → わかりかねる).
     /// </summary>
     private List<WordInfo> CombineInflections(List<WordInfo> wordInfos)
     {
-        if (wordInfos.Count < 2)
-            return wordInfos;
+        if (wordInfos.Count < 2) return wordInfos;
 
         var deconjugator = Deconjugator.Instance;
         var result = new List<WordInfo>(wordInfos.Count);
-        int i = 0;
 
-        while (i < wordInfos.Count)
+        for (int i = 0; i < wordInfos.Count; i++)
         {
-            var baseWord = wordInfos[i];
+            var currentWord = new WordInfo(wordInfos[i]);
 
-            // Check if this is a potential base for inflection
-            bool isInflectableBase = InflectableBasePOS.Contains(baseWord.PartOfSpeech) ||
-                                      baseWord.HasPartOfSpeechSection(PartOfSpeechSection.PossibleSuru);
+            // Check if potential base for inflection
+            bool isBase = (InflectableBasePOS.Contains(currentWord.PartOfSpeech) ||
+                           currentWord.HasPartOfSpeechSection(PartOfSpeechSection.PossibleSuru))
+                          && currentWord.NormalizedForm != "物";
 
-            if (!isInflectableBase || i == wordInfos.Count - 1)
+            if (!isBase)
             {
-                result.Add(baseWord);
-                i++;
+                result.Add(currentWord);
                 continue;
             }
 
-            // Greedy lookahead: find max extent of potential inflection parts
-            int maxExtent = FindMaxInflectionExtent(wordInfos, i);
+            // Track current target dictionary form
+            var currentDictForm = currentWord.DictionaryForm;
+            var currentPOS = currentWord.PartOfSpeech;
 
-            if (maxExtent == i)
+            // Iteratively try to merge subsequent tokens
+            while (i + 1 < wordInfos.Count)
             {
-                result.Add(baseWord);
-                i++;
-                continue;
-            }
+                var nextWord = wordInfos[i + 1];
 
-            // Try combining from longest to shortest
-            bool combined = false;
-            for (int end = maxExtent; end > i && !combined; end--)
-            {
-                var combinedText = BuildCombinedText(wordInfos, i, end);
+                // Safety filter: stop at particles
+                if (nextWord.Text is "は" or "な" or "よ" or "し" or "を" or "が" or "ください")
+                    break;
 
-                if (CanDeconjugateTo(deconjugator, combinedText, baseWord))
+                // Check if valid inflection part
+                bool isValidPart = InflectionPartPOS.Contains(nextWord.PartOfSpeech) ||
+                                   nextWord.HasPartOfSpeechSection(PartOfSpeechSection.AuxiliaryVerbStem) ||
+                                   nextWord.HasPartOfSpeechSection(PartOfSpeechSection.ConjunctionParticle) ||
+                                   nextWord.HasPartOfSpeechSection(PartOfSpeechSection.Dependant) ||
+                                   nextWord.HasPartOfSpeechSection(PartOfSpeechSection.PossibleDependant);
+
+                if (!isValidPart) break;
+
+                string candidateText = currentWord.Text + nextWord.Text;
+                string candidateHiragana = KanaNormalizer.Normalize(WanaKana.ToHiragana(candidateText));
+                var forms = deconjugator.Deconjugate(candidateHiragana);
+
+                bool merged = false;
+                string? newDictForm = null;
+
+                // Scenario A: Standard inflection - deconjugates to current target
+                string targetHiragana = currentPOS == PartOfSpeech.Noun
+                    ? KanaNormalizer.Normalize(WanaKana.ToHiragana(currentDictForm)) + "する"
+                    : KanaNormalizer.Normalize(WanaKana.ToHiragana(currentDictForm));
+
+                if (forms.Any(f => f.Text == targetHiragana))
                 {
-                    var newWord = new WordInfo(baseWord) { Text = combinedText };
-
-                    // If noun + suru inflection, update to verb
-                    if (baseWord.PartOfSpeech == PartOfSpeech.Noun &&
-                        baseWord.HasPartOfSpeechSection(PartOfSpeechSection.PossibleSuru))
+                    merged = true;
+                    if (currentPOS == PartOfSpeech.Noun)
                     {
-                        newWord.PartOfSpeech = PartOfSpeech.Verb;
-                        newWord.DictionaryForm = baseWord.DictionaryForm + "する";
+                        newDictForm = currentDictForm + "する";
+                        currentPOS = PartOfSpeech.Verb;
                     }
+                }
+                // Scenario B: Suffix transition - creates new compound verb
+                // Handle both: Suffix with VerbLike (かねる) and Verb with PossibleDependant (切れる, 合う, etc.)
+                // IMPORTANT: Only apply when:
+                // 1. Base is a Verb, not a Noun (e.g. 提出+いただき should NOT combine)
+                // 2. Current word doesn't end in te-form or auxiliary patterns (these are grammatical constructions, not compounds)
+                //    - て/で: te-form (探して+みる is NOT a compound)
+                //    - たく/なく: adverbial form of auxiliaries (転げ回りたく+なる is NOT a compound)
+                else if (currentPOS == PartOfSpeech.Verb &&
+                         !currentWord.Text.EndsWith("て") &&
+                         !currentWord.Text.EndsWith("で") &&
+                         !currentWord.Text.EndsWith("たく") &&
+                         !currentWord.Text.EndsWith("なく") &&
+                         (nextWord.HasPartOfSpeechSection(PartOfSpeechSection.VerbLike) ||
+                          (nextWord.PartOfSpeech == PartOfSpeech.Verb && nextWord.HasPartOfSpeechSection(PartOfSpeechSection.PossibleDependant))))
+                {
+                    var suffixDict = KanaNormalizer.Normalize(WanaKana.ToHiragana(nextWord.DictionaryForm));
+                    var match = forms.FirstOrDefault(f => f.Text.EndsWith(suffixDict) && f.Text.Length > suffixDict.Length);
 
-                    result.Add(newWord);
-                    i = end + 1;
-                    combined = true;
+                    if (match != null)
+                    {
+                        merged = true;
+                        newDictForm = match.Text;
+                        currentPOS = PartOfSpeech.Verb;
+                    }
+                }
+
+                if (merged)
+                {
+                    currentWord.Text = candidateText;
+                    currentWord.PartOfSpeech = currentPOS;
+                    if (newDictForm != null)
+                        currentWord.DictionaryForm = newDictForm;
+                    currentDictForm = currentWord.DictionaryForm;
+                    i++;
+                }
+                else
+                {
+                    break;
                 }
             }
 
-            if (!combined)
-            {
-                result.Add(baseWord);
-                i++;
-            }
+            result.Add(currentWord);
         }
 
         return result;
-    }
-
-    private static int FindMaxInflectionExtent(List<WordInfo> wordInfos, int baseIndex)
-    {
-        int extent = baseIndex;
-        const int MAX_LOOKAHEAD = 5;
-
-        for (int j = baseIndex + 1; j < wordInfos.Count && j <= baseIndex + MAX_LOOKAHEAD; j++)
-        {
-            var word = wordInfos[j];
-
-            bool isInflectionPart = InflectionPartPOS.Contains(word.PartOfSpeech) ||
-                                     word.HasPartOfSpeechSection(PartOfSpeechSection.AuxiliaryVerbStem) ||
-                                     word.HasPartOfSpeechSection(PartOfSpeechSection.ConjunctionParticle) ||
-                                     word.HasPartOfSpeechSection(PartOfSpeechSection.Dependant) ||
-                                     word.HasPartOfSpeechSection(PartOfSpeechSection.PossibleDependant);
-
-            // Stop at clear word boundaries
-            if (!isInflectionPart)
-                break;
-
-            extent = j;
-        }
-
-        return extent;
-    }
-
-    private static string BuildCombinedText(List<WordInfo> wordInfos, int start, int end)
-    {
-        var sb = new StringBuilder();
-        for (int k = start; k <= end; k++)
-            sb.Append(wordInfos[k].Text);
-        return sb.ToString();
-    }
-
-    private static bool CanDeconjugateTo(Deconjugator deconjugator, string combinedText, WordInfo baseWord)
-    {
-        var combinedHiragana = KanaNormalizer.Normalize(WanaKana.ToHiragana(combinedText));
-
-        // Target is either dictionary form or dictionary form + する for suru-verbs
-        var targetHiragana = KanaNormalizer.Normalize(WanaKana.ToHiragana(baseWord.DictionaryForm));
-        var targetSuru = targetHiragana + "する";
-
-        var forms = deconjugator.Deconjugate(combinedHiragana);
-
-        return forms.Any(f => f.Text == targetHiragana ||
-                              (baseWord.HasPartOfSpeechSection(PartOfSpeechSection.PossibleSuru) &&
-                               f.Text == targetSuru));
     }
 
     private List<WordInfo> CombinePrefixes(List<WordInfo> wordInfos)
