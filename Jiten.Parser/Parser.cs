@@ -143,11 +143,17 @@ namespace Jiten.Parser
                 var rescueInput = failedWords.Select(f => (f.wordInfo, 0)).ToList();
                 var rescuedGroups = await RescueFailedWords(rescueInput, deconjugator);
 
-                for (int i = failedWords.Count - 1; i >= 0; i--)
+                int offset = 0;
+                for (int i = 0; i < failedWords.Count; i++)
                 {
-                    var (index, _) = failedWords[i];
-                    allProcessedWords.RemoveAt(index);
-                    allProcessedWords.InsertRange(index, rescuedGroups[i]);
+                    var (originalIndex, _) = failedWords[i];
+                    var adjustedIndex = originalIndex + offset;
+                    var rescuedGroup = rescuedGroups[i];
+
+                    allProcessedWords.RemoveAt(adjustedIndex);
+                    allProcessedWords.InsertRange(adjustedIndex, rescuedGroup);
+
+                    offset += (rescuedGroup.Count - 1);
                 }
             }
 
@@ -292,13 +298,17 @@ namespace Jiten.Parser
                 var rescueInput = failedWords.Select(f => (f.wordInfo, f.occurrences)).ToList();
                 var rescuedGroups = await RescueFailedWords(rescueInput, deconjugator);
 
-                for (int i = failedWords.Count - 1; i >= 0; i--)
+                int offset = 0;
+                for (int i = 0; i < failedWords.Count; i++)
                 {
-                    var (index, _, _) = failedWords[i];
+                    var (originalIndex, _, _) = failedWords[i];
+                    var adjustedIndex = originalIndex + offset;
                     var rescuedGroup = rescuedGroups[i];
 
-                    allProcessedWords.RemoveAt(index);
-                    allProcessedWords.InsertRange(index, rescuedGroup);
+                    allProcessedWords.RemoveAt(adjustedIndex);
+                    allProcessedWords.InsertRange(adjustedIndex, rescuedGroup);
+
+                    offset += (rescuedGroup.Count - 1);
                 }
             }
 
@@ -1064,7 +1074,7 @@ namespace Jiten.Parser
             var combinedText = string.Join("|", rescueCandidates.Select(x => x.w.wordInfo.Text));
 
             var analyser = new MorphologicalAnalyser();
-            var sentences = await analyser.Parse(combinedText, morphemesOnly: true);
+            var sentences = await analyser.Parse(combinedText, morphemesOnly: true, preserveStopToken:true);
             var allWords = sentences.SelectMany(s => s.Words).Select(w => w.word).ToList();
 
             int candidateIdx = 0;

@@ -175,8 +175,7 @@ public class MorphologicalAnalyser
                 results.Add([new SentenceInfo("") { Words = wordInfos.Select(w => (w, (byte)0, (byte)0)).ToList() }]);
                 continue;
             }
-
-            // All Combine* methods - SINGLE place to maintain
+            
             wordInfos = ProcessSpecialCases(wordInfos);
             wordInfos = CombineInflections(wordInfos);
             wordInfos = CombineAmounts(wordInfos);
@@ -227,8 +226,7 @@ public class MorphologicalAnalyser
                 word.DictionaryForm = "です";
                 word.PartOfSpeech = PartOfSpeech.Auxiliary;
             }
-
-
+            
             if (MisparsesRemove.Contains(word.Text) ||
                 word.PartOfSpeech == PartOfSpeech.Noun && (
                     (word.Text.Length == 1 && WanaKana.IsKana(word.Text)) ||
