@@ -26,6 +26,9 @@ namespace Jiten.Parser
         private static IDbContextFactory<JitenDbContext> _contextFactory;
         private static Dictionary<string, List<int>> _lookups;
 
+        // Cache for compound expression lookups
+        private static readonly Dictionary<string, (bool validExpression, int? wordId)> CompoundExpressionCache = new();
+        private static readonly Lock CompoundCacheLock = new();
 
         private static async Task InitDictionaries()
         {
@@ -115,8 +118,9 @@ namespace Jiten.Parser
 
             // Filter bad lines that cause exceptions
             wordInfos.ForEach(x => x.Text = Regex.Replace(x.Text, "ッー", ""));
+            wordInfos = CombineCompounds(wordInfos);
 
-            Deconjugator deconjugator = Deconjugator.Instance;
+            var deconjugator = Deconjugator.Instance;
 
             const int BATCH_SIZE = 1000;
             List<DeckWord?> allProcessedWords = new();
@@ -256,6 +260,8 @@ namespace Jiten.Parser
 
             // Filter bad lines that cause exceptions
             wordInfos.ForEach(x => x.Text = Regex.Replace(x.Text, "ッー", ""));
+
+            wordInfos = CombineCompounds(wordInfos);
 
             var uniqueWords = new List<(WordInfo wordInfo, int occurrences)>();
             var wordCount = new Dictionary<(string, PartOfSpeech), int>();
@@ -1012,12 +1018,7 @@ namespace Jiten.Parser
                 if (readingIndex == -1)
                     continue;
 
-                matchedWords.Add(new DeckWord()
-                                 {
-                                     WordId = bestMatch.WordId,
-                                     ReadingIndex = (byte)readingIndex,
-                                     OriginalText = word
-                                 });
+                matchedWords.Add(new DeckWord() { WordId = bestMatch.WordId, ReadingIndex = (byte)readingIndex, OriginalText = word });
             }
 
             return matchedWords;
@@ -1030,9 +1031,9 @@ namespace Jiten.Parser
             var groupedResults = failedWords.Select(_ => new List<DeckWord>()).ToList();
 
             var potentialCandidates = failedWords
-                .Select((w, idx) => (w, idx))
-                // .Where(x => x.w.wordInfo.Text.Length > 1 && x.w.wordInfo.Text.Any(IsKanji) || x.w.wordInfo.Text.Length > 4)
-                .ToList();
+                                      .Select((w, idx) => (w, idx))
+                                      // .Where(x => x.w.wordInfo.Text.Length > 1 && x.w.wordInfo.Text.Any(IsKanji) || x.w.wordInfo.Text.Length > 4)
+                                      .ToList();
 
             if (potentialCandidates.Count == 0)
                 return groupedResults;
@@ -1044,10 +1045,10 @@ namespace Jiten.Parser
                 foreach (var candidate in potentialCandidates)
                 {
                     var cacheKey = new DeckWordCacheKey(
-                        candidate.w.wordInfo.Text,
-                        candidate.w.wordInfo.PartOfSpeech,
-                        candidate.w.wordInfo.DictionaryForm
-                    );
+                                                        candidate.w.wordInfo.Text,
+                                                        candidate.w.wordInfo.PartOfSpeech,
+                                                        candidate.w.wordInfo.DictionaryForm
+                                                       );
 
                     try
                     {
@@ -1074,7 +1075,7 @@ namespace Jiten.Parser
             var combinedText = string.Join("|", rescueCandidates.Select(x => x.w.wordInfo.Text));
 
             var analyser = new MorphologicalAnalyser();
-            var sentences = await analyser.Parse(combinedText, morphemesOnly: true, preserveStopToken:true);
+            var sentences = await analyser.Parse(combinedText, morphemesOnly: true, preserveStopToken: true);
             var allWords = sentences.SelectMany(s => s.Words).Select(w => w.word).ToList();
 
             int candidateIdx = 0;
@@ -1094,6 +1095,7 @@ namespace Jiten.Parser
                         if (UseCache && processed.Count == 0)
                             await CacheRescueMarker(original.wordInfo);
                     }
+
                     currentGroup.Clear();
                     candidateIdx++;
                 }
@@ -1122,14 +1124,14 @@ namespace Jiten.Parser
             try
             {
                 var cacheKey = new DeckWordCacheKey(
-                    wordInfo.Text,
-                    wordInfo.PartOfSpeech,
-                    wordInfo.DictionaryForm
-                );
+                                                    wordInfo.Text,
+                                                    wordInfo.PartOfSpeech,
+                                                    wordInfo.DictionaryForm
+                                                   );
 
                 await DeckWordCache.SetAsync(cacheKey,
-                    new DeckWord { WordId = -1, OriginalText = wordInfo.Text },
-                    CommandFlags.FireAndForget);
+                                             new DeckWord { WordId = -1, OriginalText = wordInfo.Text },
+                                             CommandFlags.FireAndForget);
             }
             catch
             {
@@ -1160,6 +1162,117 @@ namespace Jiten.Parser
             return results;
         }
 
-        private static bool IsKanji(char c) => c >= '\u4E00' && c <= '\u9FAF';
+        private static List<WordInfo> CombineCompounds(List<WordInfo> wordInfos)
+        {
+            if (wordInfos.Count < 2)
+                return wordInfos;
+
+            var result = new List<WordInfo>(wordInfos.Count);
+            int i = 0;
+
+            while (i < wordInfos.Count)
+            {
+                var word = wordInfos[i];
+
+                // Only check verbs/i-adjectives
+                if (word.PartOfSpeech is PartOfSpeech.Verb or PartOfSpeech.IAdjective)
+                {
+                    var match = TryMatchCompounds(wordInfos, i);
+                    if (match.HasValue)
+                    {
+                        var (startIndex, dictForm, wordId) = match.Value;
+
+                        int tokensToRemove = i - startIndex;
+                        if (tokensToRemove > 0 && result.Count >= tokensToRemove)
+                        {
+                            result.RemoveRange(result.Count - tokensToRemove, tokensToRemove);
+                        }
+
+                        var originalText = string.Concat(wordInfos.Skip(startIndex).Take(i - startIndex + 1).Select(w => w.Text));
+                        result.Add(new WordInfo
+                                   {
+                                       Text = originalText, DictionaryForm = dictForm, PartOfSpeech = PartOfSpeech.Expression,
+                                       NormalizedForm = dictForm, Reading = WanaKana.ToHiragana(originalText)
+                                   });
+
+                        i++;
+                        continue;
+                    }
+                }
+
+                result.Add(word);
+                i++;
+            }
+
+            return result;
+        }
+
+        private static (int startIndex, string dictionaryForm, int wordId)? TryMatchCompounds(
+            List<WordInfo> wordInfos,
+            int wordIndex)
+        {
+            var verb = wordInfos[wordIndex];
+            
+            var dictForm = verb.DictionaryForm;
+            
+            // Try to deconjugate the dictionary form
+            if (string.IsNullOrEmpty(dictForm) || dictForm == verb.Text)
+            {
+                var deconjugated = Deconjugator.Instance.Deconjugate(WanaKana.ToHiragana(verb.Text));
+                if (deconjugated.Count == 0) return null;
+                dictForm = deconjugated.First().Text;
+            }
+
+            // Backward window scan for greedy matching
+            for (int windowSize = Math.Min(5, wordIndex + 1); windowSize >= 2; windowSize--)
+            {
+                int startIndex = wordIndex - windowSize + 1;
+
+                var prefix = string.Concat(wordInfos.Skip(startIndex).Take(windowSize - 1).Select(w => w.Text));
+                var candidate = prefix + dictForm;
+
+                lock (CompoundCacheLock)
+                {
+                    if (CompoundExpressionCache.TryGetValue(candidate, out var cached))
+                    {
+                        if (cached.validExpression)
+                            return (startIndex, candidate, cached.wordId!.Value);
+                        
+                        // If we have something in the cache but it's not marked as exist, then just skip it and try a smaller window
+                        continue;
+                    }
+                }
+
+                if (_lookups.TryGetValue(candidate, out var wordIds) && wordIds.Count > 0)
+                {
+                    lock (CompoundCacheLock)
+                    {
+                        CompoundExpressionCache[candidate] = (true, wordIds[0]);
+                    }
+
+                    return (startIndex, candidate, wordIds[0]);
+                }
+
+                // If we failed to find it, then try a pure hiragana version
+                var hiraganaCandidate = WanaKana.ToHiragana(candidate);
+                if (hiraganaCandidate != candidate && _lookups.TryGetValue(hiraganaCandidate, out wordIds) && wordIds.Count > 0)
+                {
+                    lock (CompoundCacheLock)
+                    {
+                        CompoundExpressionCache[candidate] = (true, wordIds[0]);
+                    }
+
+                    return (startIndex, candidate, wordIds[0]);
+                }
+
+                // If we failed, then it's not a valid expression
+                lock (CompoundCacheLock)
+                {
+                    CompoundExpressionCache[candidate] = (false, null);
+                }
+            }
+
+            return null;
+        }
     }
 }

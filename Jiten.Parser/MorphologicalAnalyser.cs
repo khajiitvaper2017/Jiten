@@ -54,7 +54,7 @@ public class MorphologicalAnalyser
 
     private static readonly HashSet<string> MisparsesRemove =
         ["そ", "ー", "る", "ま", "ふ", "ち", "ほ", "す", "じ", "なさ", "い", "ぴ", "ふあ", "ぷ", "ちゅ", "にっ", "じら", "タ", "け", "イ", "イッ", "ほっ",
-        "ウー", "うー", "ううう", "うう", "ウウウウ", "ウウ", "ううっ", "かー", "ぐわー"];
+        "ウー", "うー", "ううう", "うう", "ウウウウ", "ウウ", "ううっ", "かー", "ぐわー", "違"];
 
     // Token to separate some words in sudachi
     private static readonly string _stopToken = "|";
