@@ -64,7 +64,7 @@ const navigateToDeck = async (deckId: number) => {
 };
 
 const totalOptions = computed(() => {
-  if (!showMediaSection.value) {
+  if (!showMediaSection.value || suggestions.value.length === 0) {
     return 1;
   }
   return 2 + suggestions.value.length;
@@ -100,9 +100,9 @@ const handleKeyDown = (event: KeyboardEvent) => {
 const handleSelection = () => {
   if (highlightedIndex.value === 0) {
     navigateToParse();
-  } else if (showMediaSection.value && highlightedIndex.value === 1) {
+  } else if (showMediaSection.value && suggestions.value.length > 0 && highlightedIndex.value === 1) {
     navigateToMediaSearch();
-  } else if (showMediaSection.value) {
+  } else if (showMediaSection.value && suggestions.value.length > 0) {
     const suggestionIndex = highlightedIndex.value - 2;
     if (suggestions.value[suggestionIndex]) {
       navigateToDeck(suggestions.value[suggestionIndex].deckId);
@@ -210,6 +210,7 @@ const remainingCount = computed(() => {
 
         <template v-if="showMediaSection">
           <div
+            v-if="suggestions.length > 0"
             class="px-4 py-2.5 cursor-pointer flex items-center gap-3 border-t border-gray-100 dark:border-gray-700 transition-colors"
             :class="
               highlightedIndex === 1 ? 'bg-purple-100 dark:bg-purple-900/30' : 'hover:bg-gray-100 dark:hover:bg-gray-700'
