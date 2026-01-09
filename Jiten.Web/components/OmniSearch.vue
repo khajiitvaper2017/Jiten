@@ -155,7 +155,7 @@ const remainingCount = computed(() => {
 
 <template>
   <div class="relative w-full">
-    <div ref="inputRef" class="flex flex-row">
+    <div ref="inputRef" class="flex flex-row search-container">
       <IconField class="w-full">
         <InputIcon>
           <Icon name="material-symbols:search-rounded" />
@@ -164,7 +164,7 @@ const remainingCount = computed(() => {
           v-model="searchText"
           type="text"
           :placeholder="placeholder || 'Search words, sentences, or media'"
-          class="w-full"
+          class="w-full text-sm sm:text-base"
           maxlength="500"
           :autofocus="autofocus"
           role="combobox"
@@ -291,5 +291,15 @@ const remainingCount = computed(() => {
 .fade-enter-from,
 .fade-leave-to {
   opacity: 0;
+}
+
+.search-container :deep(input::placeholder) {
+  font-size: 0.7rem;
+}
+
+@media (min-width: 640px) {
+  .search-container :deep(input::placeholder) {
+    font-size: 1rem;
+  }
 }
 </style>
