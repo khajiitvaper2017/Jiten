@@ -46,7 +46,7 @@
     {
       icon: 'material-symbols-light:download',
       title: 'Custom Anki Decks',
-      description: 'Download vocabulary decks with pitch accent, example sentences, and frequency data. Filter your already known words.',
+      description: 'Download vocabulary decks with example sentences, pitch accent, and frequency data. Filter your already known words.',
     },
     {
       icon: 'material-symbols-light:dictionary',
@@ -61,7 +61,7 @@
     {
       icon: 'material-symbols-light:book-2',
       title: 'Frequency Dictionaries',
-      description: 'Download frequency dictionaries for Yomitan based on our extensive media collection .',
+      description: 'Download frequency dictionaries for Yomitan based on our extensive media collection.',
       link: '/other',
     },
     {

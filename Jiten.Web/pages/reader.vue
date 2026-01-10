@@ -15,7 +15,7 @@
     {
       icon: 'material-symbols-light:language-japanese-kana',
       title: 'Parse Japanese Anywhere',
-      description: 'Works on webpages and 15+ apps including ttsu reader, asbplayer, mokuro, and Satori Reader.',
+      description: 'Works on webpages and 15+ apps including Ttsu Reader, Asbplayer, and Mokuro Reader.',
     },
     {
       icon: 'material-symbols-light:dictionary',
@@ -40,7 +40,7 @@
     {
       icon: 'material-symbols-light:target',
       title: 'I+1 Sentences',
-      description: 'Highlight sentences with exactly one unknown word — perfect for efficient learning.',
+      description: 'Highlight sentences with exactly one unknown word.',
     },
     {
       icon: 'material-symbols-light:trending-up',
@@ -104,13 +104,13 @@
 
             <!-- Download Buttons -->
             <div class="flex flex-col sm:flex-row gap-4 justify-center mb-4">
-              <a href="#chrome-coming-soon" class="no-underline">
+              <a href="https://chromewebstore.google.com/detail/jiten-reader/fkegmlkjkenojfiplaclhlmncfeooaeo" target="_blank" rel="noopener noreferrer" class="no-underline">
                 <Button severity="primary" size="large" class="w-full sm:w-auto">
                   <Icon name="logos:chrome" class="mr-2" size="1.5em" />
                   Get for Chrome
                 </Button>
               </a>
-              <a href="#firefox-coming-soon" class="no-underline">
+              <a href="https://addons.mozilla.org/en-US/firefox/addon/jiten-reader/" target="_blank" rel="noopener noreferrer" class="no-underline">
                 <Button severity="secondary" size="large" class="w-full sm:w-auto">
                   <Icon name="logos:firefox" class="mr-2" size="1.5em" />
                   Get for Firefox
@@ -156,7 +156,7 @@
         <template #title>
           <div class="flex items-center">
             <Icon name="material-symbols-light:apps" class="mr-2 text-primary" size="1.5em" />
-            Works With Your Favourite Apps
+            Works with your favourite apps
           </div>
         </template>
         <template #subtitle> Automatic parsing on 15+ websites and apps </template>
@@ -186,7 +186,7 @@
         <template #title>
           <div class="flex items-center">
             <Icon name="material-symbols-light:screenshot-monitor" class="mr-2 text-primary" size="1.5em" />
-            See It In Action
+            See it in action
           </div>
         </template>
         <template #content>
@@ -202,18 +202,18 @@
       <Card class="shadow-lg">
         <template #content>
           <div class="text-center">
-            <h2 class="text-2xl font-bold mb-4">Start Reading Japanese Today</h2>
+            <h2 class="text-2xl font-bold mb-4">Start reading Japanese today</h2>
             <p class="text-gray-600 dark:text-gray-300 mb-6">Free, open source, and designed for immersion learners.</p>
 
             <!-- Download Buttons -->
             <div class="flex flex-col sm:flex-row gap-4 justify-center mb-6">
-              <a href="https://chromewebstore.google.com/detail/jiten-reader/fkegmlkjkenojfiplaclhlmncfeooaeo" class="no-underline">
+              <a href="https://chromewebstore.google.com/detail/jiten-reader/fkegmlkjkenojfiplaclhlmncfeooaeo" target="_blank" rel="noopener noreferrer" class="no-underline">
                 <Button severity="primary" size="large" class="w-full sm:w-auto">
                   <Icon name="logos:chrome" class="mr-2" size="1.5em" />
                   Get for Chrome
                 </Button>
               </a>
-              <a href="https://addons.mozilla.org/en-US/firefox/addon/jiten-reader/" class="no-underline">
+              <a href="https://addons.mozilla.org/en-US/firefox/addon/jiten-reader/" target="_blank" rel="noopener noreferrer" class="no-underline">
                 <Button severity="secondary" size="large" class="w-full sm:w-auto">
                   <Icon name="logos:firefox" class="mr-2" size="1.5em" />
                   Get for Firefox

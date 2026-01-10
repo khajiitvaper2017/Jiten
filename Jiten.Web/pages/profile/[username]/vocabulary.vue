@@ -38,7 +38,7 @@
     return options;
   });
 
-  const sortOrder = ref(route.query.sortOrder === 'true' || route.query.sortOrder === '1');
+  const sortOrder = ref(route.query.sortOrder !== 'false' && route.query.sortOrder !== '0');
   const sortBy = ref(route.query.sortBy?.toString() || sortByOptions.value[0].value);
   const mediaTypeFilter = ref(route.query.mediaType?.toString() || '');
   const display = ref(route.query.display?.toString() || displayOptions.value[0].value);
