@@ -663,7 +663,6 @@ public partial class AdminController(
     public async Task<IActionResult> RecomputeAllDeckStats()
     {
         var deckIds = await dbContext.Decks
-                                   .Where(d => d.ParentDeckId == null)
                                    .Select(d => d.DeckId)
                                    .ToListAsync();
 
