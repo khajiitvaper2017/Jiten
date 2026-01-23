@@ -2,6 +2,7 @@
   import { computed } from 'vue';
   import { useJitenStore } from '~/stores/jitenStore';
   import { DifficultyDisplayStyle, DifficultyValueDisplayStyle } from '~/types';
+  import { formatDifficultyValue } from '~/utils/difficultyColours';
 
   const props = defineProps<{
     difficulty: number;
@@ -22,20 +23,9 @@
     'text-red-600 dark:text-red-300',
   ] as const;
 
-  const difficultyValue = computed(() => {
-    const clampedDifficulty = Math.min(Math.max(props.difficultyRaw, 0), 5);
+  const usePercentage = computed(() => store.difficultyValueDisplayStyle === DifficultyValueDisplayStyle.Percentage);
 
-    switch (store.difficultyValueDisplayStyle) {
-      case DifficultyValueDisplayStyle.ZeroToFive:
-        return `${clampedDifficulty.toFixed(1)}/5`;
-
-      case DifficultyValueDisplayStyle.Percentage:
-        return `${(clampedDifficulty * 20).toFixed(0)}%`;
-
-      default:
-        return `${clampedDifficulty.toFixed(1)}/5`;
-    }
-  });
+  const difficultyValue = computed(() => formatDifficultyValue(props.difficultyRaw, usePercentage.value, 1));
 
   const difficultyText = computed(() => {
     switch (store.difficultyDisplayStyle) {

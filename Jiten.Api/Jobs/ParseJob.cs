@@ -111,6 +111,10 @@ public class ParseJob(IDbContextFactory<JitenDbContext> contextFactory, IDbConte
 
         // Queue coverage statistics computation
         backgroundJobs.Enqueue<StatsComputationJob>(job => job.ComputeDeckCoverageStats(deck.DeckId));
+
+        // Queue difficulty computation (job handles children internally)
+        backgroundJobs.Enqueue<DifficultyComputationJob>(
+            job => job.ComputeDeckDifficulty(deck.DeckId));
     }
 
     /// <summary>
