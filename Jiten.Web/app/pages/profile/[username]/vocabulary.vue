@@ -173,7 +173,7 @@
         empty-message="No vocabulary found. Complete some media to see your vocabulary!"
       />
 
-      <PaginationControls :previous-link="previousLink" :next-link="nextLink" :start="start" :end="end" :total-items="totalItems" :show-summary="false" :scroll-to-top-on-next="true" />
+      <PaginationControls :previous-link="previousLink" :next-link="nextLink" :start="start" :end="end" :total-items="totalItems" :scroll-to-top-on-next="true" />
     </div>
   </div>
 </template>

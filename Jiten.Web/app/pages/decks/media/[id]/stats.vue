@@ -7,6 +7,7 @@
 
   const route = useRoute();
   const store = useJitenStore();
+  const localiseTitle = useLocaliseTitle();
 
   const usePercentage = computed(() => store.difficultyValueDisplayStyle === DifficultyValueDisplayStyle.Percentage);
   const deckId = computed(() => route.params.id as string);

@@ -1,7 +1,6 @@
 <script setup lang="ts">
   import type { ExampleSentence, MediaType, Word } from '~/types';
   import { formatPercentageApprox } from '~/utils/formatPercentageApprox';
-  import { convertToRuby } from '~/utils/convertToRuby';
   import { getMediaTypeText } from '~/utils/mediaTypeMapper';
   import ExampleSentenceEntry from '~/components/ExampleSentenceEntry.vue';
   import Button from 'primevue/button';
@@ -31,6 +30,7 @@
   const { $api } = useNuxtApp();
 
   const store = useJitenStore();
+  const convertToRuby = useConvertToRuby();
 
   const currentReadingIndex = ref(props.readingIndex);
   const url = computed(() => `vocabulary/${props.wordId}/${currentReadingIndex.value}`);

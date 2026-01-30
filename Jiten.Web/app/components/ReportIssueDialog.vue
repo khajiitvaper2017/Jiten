@@ -13,6 +13,7 @@
 
   const { $api } = useNuxtApp();
   const toast = useToast();
+  const localiseTitle = useLocaliseTitle();
 
   // Issue types and helper text
   export type IssueType = 'CharacterCount' | 'JapaneseTitle' | 'RomajiTitle' | 'EnglishTitle' | 'Cover' | 'Links' | 'Description' | 'Difficulty' | 'Other';

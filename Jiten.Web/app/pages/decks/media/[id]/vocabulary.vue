@@ -6,6 +6,7 @@
   const router = useRouter();
 
   const auth = useAuthStore();
+  const localiseTitle = useLocaliseTitle();
 
   const id = route.params.id;
 

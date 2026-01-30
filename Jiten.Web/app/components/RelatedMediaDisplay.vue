@@ -16,6 +16,8 @@ const props = withDefaults(defineProps<Props>(), {
   gapSize: 6,
 });
 
+const localiseTitle = useLocaliseTitle();
+
 const relationshipSortOrder: DeckRelationshipType[] = [
   DeckRelationshipType.Sequel,
   DeckRelationshipType.Prequel,

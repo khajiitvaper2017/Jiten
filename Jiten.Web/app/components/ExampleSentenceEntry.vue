@@ -7,6 +7,7 @@
     showSource?: boolean;
   }>();
 
+  const localiseTitle = useLocaliseTitle();
   const store = useJitenStore();
   const isNsfw = isTextNsfw(props.exampleSentence.text);
   const isRevealed = computed({

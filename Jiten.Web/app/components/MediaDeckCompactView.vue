@@ -1,7 +1,6 @@
 <script setup lang="ts">
   import type { Deck } from '~/types';
   import { getMediaTypeText } from '~/utils/mediaTypeMapper';
-  import { localiseTitle } from '~/utils/localiseTitle';
   import MediaDeckDownloadDialog from '~/components/MediaDeckDownloadDialog.vue';
   import Card from 'primevue/card';
   import { useAuthStore } from '~/stores/authStore';
@@ -9,6 +8,7 @@
 
   const authStore = useAuthStore();
   const store = useJitenStore();
+  const localiseTitle = useLocaliseTitle();
 
   const props = defineProps<{
     deck: Deck;

@@ -14,6 +14,7 @@
   const emit = defineEmits(['update:visible']);
   const { $api } = useNuxtApp();
   const authStore = useAuthStore();
+  const localiseTitle = useLocaliseTitle();
 
   const localVisible = ref(props.visible);
   const downloading = ref(false);

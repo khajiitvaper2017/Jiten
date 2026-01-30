@@ -8,6 +8,7 @@
   import { useToast } from 'primevue/usetoast';
 
   const route = useRoute();
+  const localiseTitle = useLocaliseTitle();
 
   const offset = computed(() => (route.query.offset ? Number(route.query.offset) : 0));
 

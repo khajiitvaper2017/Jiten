@@ -6,7 +6,6 @@
     end: number;
     totalItems: number;
     itemLabel?: string;
-    showSummary?: boolean;
     scrollToTopOnNext?: boolean;
   }>();
 
@@ -22,19 +21,19 @@
 <template>
   <div class="flex justify-between flex-col md:flex-row">
     <div class="flex gap-8 pl-2">
-      <NuxtLink :to="previousLink" :class="previousLink == null ? '!text-gray-500 pointer-events-none' : ''" no-rel>
+      <NuxtLink :to="previousLink" :class="previousLink == null ? 'text-gray-500! pointer-events-none' : ''" no-rel>
         Previous
       </NuxtLink>
       <NuxtLink
         :to="nextLink"
-        :class="nextLink == null ? '!text-gray-500 pointer-events-none' : ''"
+        :class="nextLink == null ? 'text-gray-500! pointer-events-none' : ''"
         no-rel
         @click="scrollToTopOnNext ? scrollToTop() : undefined"
       >
         Next
       </NuxtLink>
     </div>
-    <div v-if="showSummary !== false" class="pr-2 text-gray-500 dark:text-gray-300">
+    <div class="pr-2 text-gray-500 dark:text-gray-300">
       viewing {{ label }} {{ start }}-{{ end }} from {{ totalItems }} total
     </div>
   </div>

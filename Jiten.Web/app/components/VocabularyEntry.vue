@@ -3,7 +3,6 @@
   import Card from 'primevue/card';
   import Button from 'primevue/button';
   import VocabularyDefinitions from '~/components/VocabularyDefinitions.vue';
-  import { convertToRuby } from '~/utils/convertToRuby';
   import { useJitenStore } from '~/stores/jitenStore';
   import VocabularyStatus from '~/components/VocabularyStatus.vue';
 
@@ -12,6 +11,7 @@
     isCompact: boolean;
   }>();
 
+  const convertToRuby = useConvertToRuby();
   const isCompact = ref(props.isCompact);
 
   const toggleCompact = () => {

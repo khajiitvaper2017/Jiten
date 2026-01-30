@@ -6,6 +6,7 @@
 
   const route = useRoute();
   const deckId = computed(() => route.params.id as string);
+  const localiseTitle = useLocaliseTitle();
 
   const offset = computed(() => (route.query.offset ? Number(route.query.offset) : 0));
   const url = computed(() => `media-deck/${route.params.id}/detail`);

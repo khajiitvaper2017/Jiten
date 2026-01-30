@@ -57,6 +57,16 @@
       </Card>
 
       <Card class="shadow-md">
+        <template #title>Maintenance Banner</template>
+        <template #content>
+          <p class="mb-4">Display a site-wide maintenance notice</p>
+          <div class="flex justify-center">
+            <Button label="Manage Banner" class="p-button-primary" @click="navigateTo('/dashboard/maintenance')" />
+          </div>
+        </template>
+      </Card>
+
+      <Card class="shadow-md">
         <template #title>Tags & Mappings</template>
         <template #content>
           <p class="mb-4">Manage tags, genre mappings, and tag mappings for media metadata</p>
