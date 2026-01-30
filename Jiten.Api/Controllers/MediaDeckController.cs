@@ -15,6 +15,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using WanaKanaShaapu;
+using Microsoft.AspNetCore.Authorization;
 using Swashbuckle.AspNetCore.Annotations;
 
 namespace Jiten.Api.Controllers;
@@ -1307,175 +1308,22 @@ public class MediaDeckController(
             return Results.NotFound();
         }
 
-        IQueryable<DeckWord> deckWordsQuery = context.DeckWords.AsNoTracking().Where(dw => dw.DeckId == id);
-
         if (request.Format == DeckFormat.Yomitan)
         {
             var yomitanBytes = await YomitanHelper.GenerateYomitanFrequencyDeckFromDeck(contextFactory, deck);
             return Results.File(yomitanBytes, "application/zip", $"freq_{deck.OriginalTitle}.zip");
         }
 
-        List<DeckWord>? deckWordsRaw = null;
+        var (deckWordsRaw, error) = await ResolveDeckWords(
+            id, deck, request.DownloadType, request.Order,
+            request.MinFrequency, request.MaxFrequency,
+            request.ExcludeMatureMasteredBlacklisted, request.ExcludeAllTrackedWords,
+            request.TargetPercentage);
 
-        switch (request.DownloadType)
-        {
-            case DeckDownloadType.Full:
-                break;
+        if (error != null)
+            return error;
 
-            case DeckDownloadType.TopGlobalFrequency:
-                // Get the words between frequency rank minFrequency and maxFrequency
-                deckWordsQuery = deckWordsQuery.Where(dw => context.JmDictWordFrequencies
-                                                                   .Any(f => f.WordId == dw.WordId &&
-                                                                             f.ReadingsFrequencyRank[dw.ReadingIndex] >=
-                                                                             request.MinFrequency &&
-                                                                             f.ReadingsFrequencyRank[dw.ReadingIndex] <=
-                                                                             request.MaxFrequency));
-                break;
-
-            case DeckDownloadType.TopDeckFrequency:
-                deckWordsQuery = deckWordsQuery
-                                 .OrderByDescending(dw => dw.Occurrences)
-                                 .Skip(request.MinFrequency)
-                                 .Take(request.MaxFrequency - request.MinFrequency);
-                break;
-
-            case DeckDownloadType.TopChronological:
-                deckWordsQuery = deckWordsQuery
-                                 .OrderBy(dw => dw.DeckWordId)
-                                 .Skip(request.MinFrequency)
-                                 .Take(request.MaxFrequency - request.MinFrequency);
-                break;
-
-            case DeckDownloadType.TargetCoverage:
-                if (!currentUserService.IsAuthenticated)
-                    return Results.Unauthorized();
-
-                if (request.TargetPercentage is null or < 1 or > 100)
-                    return Results.BadRequest("Target percentage must be between 1 and 100");
-
-                // Get user known words
-                var knownCards = await userContext.FsrsCards
-                    .Where(kw => kw.UserId == currentUserService.UserId! &&
-                                 (kw.State == FsrsState.Blacklisted ||
-                                  kw.State == FsrsState.Mastered ||
-                                  (kw.LastReview != null &&
-                                   (kw.Due - kw.LastReview.Value).TotalDays >= 21)))
-                    .Select(kw => new { kw.WordId, kw.ReadingIndex })
-                    .ToListAsync();
-
-                var knownKeysSet = knownCards
-                    .Select(kw => ((long)kw.WordId << 32) | (uint)kw.ReadingIndex)
-                    .ToHashSet();
-
-                // Get all deck words ordered by occurrences (most frequent first)
-                var allDeckWords = await deckWordsQuery
-                    .OrderByDescending(dw => dw.Occurrences)
-                    .ToListAsync();
-
-                // Calculate current coverage from known words
-                int totalOccurrences = deck.WordCount;
-                int knownOccurrences = allDeckWords
-                    .Where(dw => knownKeysSet.Contains(((long)dw.WordId << 32) | (uint)dw.ReadingIndex))
-                    .Sum(dw => dw.Occurrences);
-
-                double targetCoverage = request.TargetPercentage.Value;
-
-                // Add unknown words (by frequency) until target coverage is reached
-                var resultWords = new List<DeckWord>();
-                int cumulativeOccurrences = knownOccurrences;
-
-                foreach (var dw in allDeckWords)
-                {
-                    var key = ((long)dw.WordId << 32) | (uint)dw.ReadingIndex;
-                    if (knownKeysSet.Contains(key))
-                        continue;
-
-                    resultWords.Add(dw);
-                    cumulativeOccurrences += dw.Occurrences;
-
-                    double newCoverage = (double)cumulativeOccurrences / totalOccurrences * 100;
-                    if (newCoverage >= targetCoverage)
-                        break;
-                }
-
-                deckWordsRaw = resultWords;
-                break;
-
-            default:
-                return Results.BadRequest();
-        }
-
-        // Apply ordering and execute query for non-TargetCoverage types
-        if (deckWordsRaw == null)
-        {
-            switch (request.Order)
-            {
-                case DeckOrder.Chronological:
-                    deckWordsQuery = deckWordsQuery.OrderBy(dw => dw.DeckWordId);
-                    break;
-
-                case DeckOrder.GlobalFrequency:
-                    deckWordsQuery = deckWordsQuery.OrderBy(dw => context.JmDictWordFrequencies
-                                                                         .Where(f => f.WordId == dw.WordId)
-                                                                         .Select(f => f.ReadingsFrequencyRank[dw.ReadingIndex])
-                                                                         .FirstOrDefault()
-                                                           );
-                    break;
-
-                case DeckOrder.DeckFrequency:
-                    deckWordsQuery = deckWordsQuery.OrderByDescending(dw => dw.Occurrences);
-                    break;
-                default:
-                    return Results.BadRequest();
-            }
-
-            deckWordsRaw = await deckWordsQuery.ToListAsync();
-        }
-
-        if (request.ExcludeMatureMasteredBlacklisted && currentUserService.IsAuthenticated)
-        {
-            var userCards = await userContext.FsrsCards
-                                             .Where(kw => kw.UserId == currentUserService.UserId!)
-                                             .Select(kw => new { kw.WordId, kw.ReadingIndex, kw.State, kw.LastReview, kw.Due })
-                                             .ToListAsync();
-
-            var matureKeys = userCards
-                             .Where(kw => kw.State == FsrsState.Mastered ||
-                                          kw.State == FsrsState.Blacklisted ||
-                                          (kw.LastReview != null && (kw.Due - kw.LastReview.Value).TotalDays >= 21))
-                             .Select(kw => ((long)kw.WordId << 32) | (uint)kw.ReadingIndex)
-                             .ToHashSet();
-
-            deckWordsRaw = deckWordsRaw
-                           .Where(dw =>
-                           {
-                               var key = ((long)dw.WordId << 32) | (uint)dw.ReadingIndex;
-                               return !matureKeys.Contains(key);
-                           })
-                           .ToList();
-        }
-
-        if (request.ExcludeAllTrackedWords && currentUserService.IsAuthenticated)
-        {
-            var trackedWordIds = await userContext.FsrsCards
-                                                  .Where(kw => kw.UserId == currentUserService.UserId!)
-                                                  .Select(kw => new { kw.WordId, kw.ReadingIndex })
-                                                  .ToListAsync();
-
-            var trackedKeys = trackedWordIds
-                              .Select(kw => ((long)kw.WordId << 32) | (uint)kw.ReadingIndex)
-                              .ToHashSet();
-
-            deckWordsRaw = deckWordsRaw
-                           .Where(dw =>
-                           {
-                               var key = ((long)dw.WordId << 32) | (uint)dw.ReadingIndex;
-                               return !trackedKeys.Contains(key);
-                           })
-                           .ToList();
-        }
-
-        var wordIds = deckWordsRaw.Select(dw => (long)dw.WordId).ToList();
+        var wordIds = deckWordsRaw!.Select(dw => (long)dw.WordId).ToList();
 
         List<(int WordId, byte ReadingIndex, int Occurrences)> deckWords = deckWordsRaw
                                                                            .Select(dw => new ValueTuple<int, byte, int>(dw.WordId,
@@ -1498,6 +1346,76 @@ public class MediaDeckController(
             DeckFormat.Txt or DeckFormat.TxtRepeated => Results.File(bytes, "text/plain", $"{deck.OriginalTitle}.txt"),
             _ => throw new ArgumentOutOfRangeException()
         };
+    }
+
+    /// <summary>
+    /// Marks the resolved vocabulary of a deck as mastered or blacklisted in the user's vocabulary tracker.
+    /// </summary>
+    /// <param name="id">Deck identifier.</param>
+    /// <param name="request">Learn options including vocabulary state.</param>
+    /// <returns>Count of applied words and the state.</returns>
+    [HttpPost("{id}/learn")]
+    [Authorize]
+    [EnableRateLimiting("download")]
+    [SwaggerOperation(Summary = "Bulk-apply vocabulary from a deck",
+                      Description = "Mark resolved vocabulary as mastered or blacklisted. No file is generated.")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IResult> LearnDeck(int id, [FromBody] DeckLearnRequest request)
+    {
+        var state = request.VocabularyState?.ToLowerInvariant();
+        if (state is not ("mastered" or "blacklisted"))
+            return Results.BadRequest("VocabularyState must be 'mastered' or 'blacklisted'.");
+
+        var deck = await context.Decks
+                                .AsNoTracking()
+                                .Include(d => d.Children)
+                                .FirstOrDefaultAsync(d => d.DeckId == id);
+
+        if (deck == null)
+            return Results.NotFound();
+
+        var (deckWordsRaw, error) = await ResolveDeckWords(
+            id, deck, request.DownloadType, request.Order,
+            request.MinFrequency, request.MaxFrequency,
+            request.ExcludeMatureMasteredBlacklisted, request.ExcludeAllTrackedWords,
+            request.TargetPercentage);
+
+        if (error != null)
+            return error;
+
+        if (request.ExcludeKana)
+        {
+            var wordIds = deckWordsRaw!.Select(dw => dw.WordId).Distinct().ToList();
+            var readings = await context.JMDictWords
+                .AsNoTracking()
+                .Where(w => wordIds.Contains(w.WordId))
+                .Select(w => new { w.WordId, w.Readings })
+                .ToDictionaryAsync(w => w.WordId);
+
+            deckWordsRaw = deckWordsRaw!.Where(dw =>
+            {
+                if (!readings.TryGetValue(dw.WordId, out var r)) return true;
+                if (dw.ReadingIndex >= r.Readings.Count) return true;
+                return !WanaKana.IsKana(r.Readings[dw.ReadingIndex]);
+            }).ToList();
+        }
+
+        int applied;
+        if (state == "mastered")
+            applied = await currentUserService.AddKnownWords(deckWordsRaw!);
+        else
+            applied = await currentUserService.BlacklistWords(deckWordsRaw!);
+
+        await CoverageDirtyHelper.MarkCoverageDirty(userContext, currentUserService.UserId!);
+        await userContext.SaveChangesAsync();
+
+        logger.LogInformation(
+            "User applied learn to deck: DeckId={DeckId}, DeckTitle={DeckTitle}, State={State}, WordCount={WordCount}",
+            id, deck.OriginalTitle, state, deckWordsRaw!.Count);
+
+        return Results.Ok(new { applied = deckWordsRaw.Count, state });
     }
 
     /// <summary>
@@ -2150,5 +2068,191 @@ public class MediaDeckController(
             }).ToList(),
             LastUpdated = difficulty.LastUpdated
         };
+    }
+
+    private async Task<(List<DeckWord>? Words, IResult? Error)> ResolveDeckWords(
+        int deckId, Deck deck,
+        DeckDownloadType downloadType, DeckOrder order,
+        int minFrequency, int maxFrequency,
+        bool excludeMatureMasteredBlacklisted, bool excludeAllTrackedWords,
+        float? targetPercentage)
+    {
+        IQueryable<DeckWord> deckWordsQuery = context.DeckWords.AsNoTracking().Where(dw => dw.DeckId == deckId);
+
+        List<DeckWord>? deckWordsRaw = null;
+
+        switch (downloadType)
+        {
+            case DeckDownloadType.Full:
+                break;
+
+            case DeckDownloadType.TopGlobalFrequency:
+                deckWordsQuery = deckWordsQuery.Where(dw => context.JmDictWordFrequencies
+                                                                   .Any(f => f.WordId == dw.WordId &&
+                                                                             f.ReadingsFrequencyRank[dw.ReadingIndex] >=
+                                                                             minFrequency &&
+                                                                             f.ReadingsFrequencyRank[dw.ReadingIndex] <=
+                                                                             maxFrequency));
+                break;
+
+            case DeckDownloadType.TopDeckFrequency:
+                deckWordsQuery = deckWordsQuery
+                                 .OrderByDescending(dw => dw.Occurrences)
+                                 .Skip(minFrequency)
+                                 .Take(maxFrequency - minFrequency);
+                break;
+
+            case DeckDownloadType.TopChronological:
+                deckWordsQuery = deckWordsQuery
+                                 .OrderBy(dw => dw.DeckWordId)
+                                 .Skip(minFrequency)
+                                 .Take(maxFrequency - minFrequency);
+                break;
+
+            case DeckDownloadType.TargetCoverage:
+                if (!currentUserService.IsAuthenticated)
+                    return (null, Results.Unauthorized());
+
+                if (targetPercentage is null or < 1 or > 100)
+                    return (null, Results.BadRequest("Target percentage must be between 1 and 100"));
+
+                var knownCards = await userContext.FsrsCards
+                    .Where(kw => kw.UserId == currentUserService.UserId! &&
+                                 (kw.State == FsrsState.Blacklisted ||
+                                  kw.State == FsrsState.Mastered ||
+                                  (kw.LastReview != null &&
+                                   (kw.Due - kw.LastReview.Value).TotalDays >= 21)))
+                    .Select(kw => new { kw.WordId, kw.ReadingIndex })
+                    .ToListAsync();
+
+                var knownKeysSet = knownCards
+                    .Select(kw => ((long)kw.WordId << 32) | (uint)kw.ReadingIndex)
+                    .ToHashSet();
+
+                var allDeckWords = await deckWordsQuery
+                    .OrderByDescending(dw => dw.Occurrences)
+                    .ToListAsync();
+
+                int totalOccurrences = deck.WordCount;
+                int knownOccurrences = allDeckWords
+                    .Where(dw => knownKeysSet.Contains(((long)dw.WordId << 32) | (uint)dw.ReadingIndex))
+                    .Sum(dw => dw.Occurrences);
+
+                double targetCoverage = targetPercentage.Value;
+
+                var resultWords = new List<DeckWord>();
+                int cumulativeOccurrences = knownOccurrences;
+
+                foreach (var dw in allDeckWords)
+                {
+                    var key = ((long)dw.WordId << 32) | (uint)dw.ReadingIndex;
+                    if (knownKeysSet.Contains(key))
+                        continue;
+
+                    resultWords.Add(dw);
+                    cumulativeOccurrences += dw.Occurrences;
+
+                    double newCoverage = (double)cumulativeOccurrences / totalOccurrences * 100;
+                    if (newCoverage >= targetCoverage)
+                        break;
+                }
+
+                if (order == DeckOrder.Chronological)
+                {
+                    deckWordsRaw = resultWords.OrderBy(dw => dw.DeckWordId).ToList();
+                }
+                else if (order == DeckOrder.GlobalFrequency)
+                {
+                    var resultWordIds = resultWords.Select(dw => dw.WordId).Distinct().ToList();
+                    var freqMap = await context.JmDictWordFrequencies
+                        .Where(f => resultWordIds.Contains(f.WordId))
+                        .ToDictionaryAsync(f => f.WordId, f => f.ReadingsFrequencyRank);
+
+                    deckWordsRaw = resultWords.OrderBy(dw =>
+                        freqMap.TryGetValue(dw.WordId, out var ranks) && dw.ReadingIndex < ranks.Count
+                            ? ranks[dw.ReadingIndex]
+                            : int.MaxValue
+                    ).ToList();
+                }
+                else
+                {
+                    deckWordsRaw = resultWords;
+                }
+                break;
+
+            default:
+                return (null, Results.BadRequest());
+        }
+
+        if (deckWordsRaw == null)
+        {
+            switch (order)
+            {
+                case DeckOrder.Chronological:
+                    deckWordsQuery = deckWordsQuery.OrderBy(dw => dw.DeckWordId);
+                    break;
+
+                case DeckOrder.GlobalFrequency:
+                    deckWordsQuery = deckWordsQuery.OrderBy(dw => context.JmDictWordFrequencies
+                                                                         .Where(f => f.WordId == dw.WordId)
+                                                                         .Select(f => f.ReadingsFrequencyRank[dw.ReadingIndex])
+                                                                         .FirstOrDefault()
+                                                           );
+                    break;
+
+                case DeckOrder.DeckFrequency:
+                    deckWordsQuery = deckWordsQuery.OrderByDescending(dw => dw.Occurrences);
+                    break;
+                default:
+                    return (null, Results.BadRequest());
+            }
+
+            deckWordsRaw = await deckWordsQuery.ToListAsync();
+        }
+
+        if (excludeMatureMasteredBlacklisted && currentUserService.IsAuthenticated)
+        {
+            var userCards = await userContext.FsrsCards
+                                             .Where(kw => kw.UserId == currentUserService.UserId!)
+                                             .Select(kw => new { kw.WordId, kw.ReadingIndex, kw.State, kw.LastReview, kw.Due })
+                                             .ToListAsync();
+
+            var matureKeys = userCards
+                             .Where(kw => kw.State == FsrsState.Mastered ||
+                                          kw.State == FsrsState.Blacklisted ||
+                                          (kw.LastReview != null && (kw.Due - kw.LastReview.Value).TotalDays >= 21))
+                             .Select(kw => ((long)kw.WordId << 32) | (uint)kw.ReadingIndex)
+                             .ToHashSet();
+
+            deckWordsRaw = deckWordsRaw
+                           .Where(dw =>
+                           {
+                               var key = ((long)dw.WordId << 32) | (uint)dw.ReadingIndex;
+                               return !matureKeys.Contains(key);
+                           })
+                           .ToList();
+        }
+
+        if (excludeAllTrackedWords && currentUserService.IsAuthenticated)
+        {
+            var trackedWordIds = await userContext.FsrsCards
+                                                  .Where(kw => kw.UserId == currentUserService.UserId!)
+                                                  .Select(kw => new { kw.WordId, kw.ReadingIndex })
+                                                  .ToListAsync();
+
+            var trackedKeys = trackedWordIds
+                              .Select(kw => ((long)kw.WordId << 32) | (uint)kw.ReadingIndex)
+                              .ToHashSet();
+
+            deckWordsRaw = deckWordsRaw
+                           .Where(dw =>
+                           {
+                               var key = ((long)dw.WordId << 32) | (uint)dw.ReadingIndex;
+                               return !trackedKeys.Contains(key);
+                           })
+                           .ToList();
+        }
+
+        return (deckWordsRaw, null);
     }
 }

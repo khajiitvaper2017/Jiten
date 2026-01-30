@@ -224,6 +224,7 @@
         ...payload,
         downloadType: DeckDownloadType.TargetCoverage,
         targetPercentage: targetPercentage.value,
+        order: deckOrder.value,
       };
     } else {
       payload = {
@@ -402,6 +403,10 @@
                 <div class="text-2xl font-black text-primary">{{ targetPercentage }}%</div>
               </div>
               <Slider v-model="targetPercentage" :step="0.1" :min="minTargetPercentage" :max="100" class="w-full" />
+              <div class="flex flex-col gap-1 mt-4">
+                <label class="text-xs text-gray-500 dark:text-gray-400 font-medium">Then Sort By</label>
+                <Select v-model="deckOrder" :options="deckOrders" option-value="value" option-label="label" class="w-full text-sm" size="small" />
+              </div>
             </div>
 
             <!-- MODE B: MANUAL CONTROL -->
