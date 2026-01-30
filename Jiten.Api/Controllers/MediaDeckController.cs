@@ -1318,7 +1318,8 @@ public class MediaDeckController(
             id, deck, request.DownloadType, request.Order,
             request.MinFrequency, request.MaxFrequency,
             request.ExcludeMatureMasteredBlacklisted, request.ExcludeAllTrackedWords,
-            request.TargetPercentage);
+            request.TargetPercentage,
+            request.MinOccurrences, request.MaxOccurrences);
 
         if (error != null)
             return error;
@@ -1380,7 +1381,8 @@ public class MediaDeckController(
             id, deck, request.DownloadType, request.Order,
             request.MinFrequency, request.MaxFrequency,
             request.ExcludeMatureMasteredBlacklisted, request.ExcludeAllTrackedWords,
-            request.TargetPercentage);
+            request.TargetPercentage,
+            request.MinOccurrences, request.MaxOccurrences);
 
         if (error != null)
             return error;
@@ -1775,6 +1777,27 @@ public class MediaDeckController(
     }
 
     /// <summary>
+    /// Returns the number of vocabulary items in a deck filtered by occurrence count thresholds.
+    /// </summary>
+    /// <param name="id">Deck identifier.</param>
+    /// <param name="minOccurrences">Minimum occurrence count (inclusive, optional).</param>
+    /// <param name="maxOccurrences">Maximum occurrence count (inclusive, optional).</param>
+    [HttpGet("{id}/vocabulary-count-occurrences")]
+    [SwaggerOperation(Summary = "Count vocabulary by occurrence count")]
+    [ProducesResponseType(typeof(int), StatusCodes.Status200OK)]
+    public IResult GetVocabularyCountByOccurrences(int id, int? minOccurrences = null, int? maxOccurrences = null)
+    {
+        var query = context.DeckWords.AsNoTracking().Where(dw => dw.DeckId == id);
+
+        if (minOccurrences.HasValue)
+            query = query.Where(dw => dw.Occurrences >= minOccurrences.Value);
+        if (maxOccurrences.HasValue)
+            query = query.Where(dw => dw.Occurrences <= maxOccurrences.Value);
+
+        return Results.Ok(query.Count());
+    }
+
+    /// <summary>
     /// Gets decks from sliding 30-day windows based on offset for display in the update log
     /// </summary>
     /// <param name="offset">Window offset: 0 = last 30 days, 1 = days 30-60 ago, 2 = days 60-90 ago, etc.</param>
@@ -2075,7 +2098,8 @@ public class MediaDeckController(
         DeckDownloadType downloadType, DeckOrder order,
         int minFrequency, int maxFrequency,
         bool excludeMatureMasteredBlacklisted, bool excludeAllTrackedWords,
-        float? targetPercentage)
+        float? targetPercentage,
+        int? minOccurrences = null, int? maxOccurrences = null)
     {
         IQueryable<DeckWord> deckWordsQuery = context.DeckWords.AsNoTracking().Where(dw => dw.DeckId == deckId);
 
@@ -2178,6 +2202,13 @@ public class MediaDeckController(
                 {
                     deckWordsRaw = resultWords;
                 }
+                break;
+
+            case DeckDownloadType.OccurrenceCount:
+                if (minOccurrences.HasValue)
+                    deckWordsQuery = deckWordsQuery.Where(dw => dw.Occurrences >= minOccurrences.Value);
+                if (maxOccurrences.HasValue)
+                    deckWordsQuery = deckWordsQuery.Where(dw => dw.Occurrences <= maxOccurrences.Value);
                 break;
 
             default:

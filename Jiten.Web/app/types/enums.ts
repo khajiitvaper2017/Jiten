@@ -54,6 +54,7 @@ export enum DeckDownloadType {
   TopDeckFrequency = 3,
   TopChronological = 4,
   TargetCoverage = 5,
+  OccurrenceCount = 6,
 }
 
 export enum DeckFormat {

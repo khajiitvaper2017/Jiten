@@ -23,7 +23,7 @@
   const localVisible = ref(props.visible);
   const downloading = ref(false);
 
-  type Mode = 'manual' | 'target';
+  type Mode = 'manual' | 'target' | 'occurrence';
   const downloadMode = ref<Mode>('manual');
   const targetPercentage = ref(80);
   const minTargetPercentage = computed(() => {
@@ -98,9 +98,10 @@
   const showStrategyAndOptions = computed(() => format.value !== DeckFormat.Yomitan);
 
   const modeOptions = computed(() => [
-    { label: 'Manual Control', value: 'manual', icon: 'pi pi-sliders-h' },
+    { label: 'Manual', value: 'manual', icon: 'pi pi-sliders-h' },
+    { label: 'Occurrences', value: 'occurrence', icon: 'pi pi-hashtag' },
     {
-      label: authStore.isAuthenticated ? 'Target Coverage %' : 'Target Coverage % (Login required)',
+      label: authStore.isAuthenticated ? 'Coverage %' : 'Coverage % (Login req.)',
       value: 'target',
       icon: 'pi pi-chart-pie',
       disabled: !authStore.isAuthenticated,
@@ -123,6 +124,11 @@
   const currentSliderMax = ref(props.deck.uniqueWordCount);
   const debouncedCurrentCardAmount = ref(0);
 
+  // Occurrence Count mode
+  const occurrenceFilterType = ref<'gte' | 'lte'>('gte');
+  const occurrenceThreshold = ref(10);
+  const occurrenceCount = ref(0);
+
   // Computed for current selection details
   const currentFormatDetails = computed(() => {
     return formatOptions.value.find((f) => f.value === format.value) || formatOptions.value[0];
@@ -134,6 +140,7 @@
 
   const currentCardAmount = computed(() => {
     if (downloadMode.value === 'target') return targetPercentageCardCount.value;
+    if (downloadMode.value === 'occurrence') return occurrenceCount.value;
 
     if (downloadType.value == DeckDownloadType.Full) {
       return props.deck.uniqueWordCount;
@@ -204,12 +211,36 @@
     { immediate: true }
   );
 
+  let frequencyRequestId = 0;
   const updateDebounced = debounce(async () => {
+    const reqId = ++frequencyRequestId;
     const { data: response } = await useApiFetch<number>(`media-deck/${props.deck.deckId}/vocabulary-count-frequency`, {
       query: { minFrequency: frequencyRange.value![0], maxFrequency: frequencyRange.value![1] },
     });
-    debouncedCurrentCardAmount.value = response.value ?? 0;
+    if (reqId === frequencyRequestId)
+      debouncedCurrentCardAmount.value = response.value ?? 0;
   }, 500);
+
+  let occurrenceRequestId = 0;
+  async function fetchOccurrenceCount() {
+    const reqId = ++occurrenceRequestId;
+    const query: Record<string, number> = {};
+    if (occurrenceFilterType.value === 'gte') query.minOccurrences = occurrenceThreshold.value;
+    else query.maxOccurrences = occurrenceThreshold.value;
+
+    const { data: response } = await useApiFetch<number>(`media-deck/${props.deck.deckId}/vocabulary-count-occurrences`, { query });
+    if (reqId === occurrenceRequestId)
+      occurrenceCount.value = response.value ?? 0;
+  }
+  const fetchOccurrenceCountDebounced = debounce(fetchOccurrenceCount, 500);
+
+  watch([occurrenceFilterType, occurrenceThreshold], () => fetchOccurrenceCountDebounced());
+  watch(downloadMode, (mode) => {
+    if (mode === 'occurrence') fetchOccurrenceCount();
+  });
+  watch(() => props.visible, (visible) => {
+    if (visible && downloadMode.value === 'occurrence') fetchOccurrenceCount();
+  });
 
   // --- Helpers ---
   function buildFilterPayload() {
@@ -225,6 +256,14 @@
         downloadType: DeckDownloadType.TargetCoverage,
         targetPercentage: targetPercentage.value,
         order: deckOrder.value,
+      };
+    } else if (downloadMode.value === 'occurrence') {
+      payload = {
+        ...payload,
+        downloadType: DeckDownloadType.OccurrenceCount,
+        order: deckOrder.value,
+        minOccurrences: occurrenceFilterType.value === 'gte' ? occurrenceThreshold.value : undefined,
+        maxOccurrences: occurrenceFilterType.value === 'lte' ? occurrenceThreshold.value : undefined,
       };
     } else {
       payload = {
@@ -383,14 +422,25 @@
           <!-- 2. STRATEGY -->
           <section>
             <div class="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest mb-3">{{ isLearn ? 'Learn Strategy' : 'Download Strategy' }}</div>
-            <SelectButton
+            <div class="hidden sm:block">
+              <SelectButton
+                v-model="downloadMode"
+                :options="modeOptions"
+                option-value="value"
+                option-label="label"
+                option-disabled="disabled"
+                class="w-full"
+                :pt="{ button: { class: 'flex-1 text-sm py-2 whitespace-nowrap' } }"
+              />
+            </div>
+            <Select
               v-model="downloadMode"
               :options="modeOptions"
               option-value="value"
               option-label="label"
               option-disabled="disabled"
-              class="w-full"
-              :pt="{ button: { class: 'flex-1 text-sm py-2' } }"
+              class="w-full sm:!hidden text-sm"
+              size="small"
             />
 
             <!-- MODE A: TARGET PERCENTAGE -->
@@ -406,6 +456,40 @@
               <div class="flex flex-col gap-1 mt-4">
                 <label class="text-xs text-gray-500 dark:text-gray-400 font-medium">Then Sort By</label>
                 <Select v-model="deckOrder" :options="deckOrders" option-value="value" option-label="label" class="w-full text-sm" size="small" />
+              </div>
+            </div>
+
+            <!-- MODE C: OCCURRENCE COUNT -->
+            <div v-else-if="downloadMode === 'occurrence'" class="mt-4 bg-gray-50 dark:bg-gray-900 rounded-xl p-5 border border-dashed border-gray-300 dark:border-gray-600">
+              <div class="flex flex-col gap-4">
+                <div class="flex flex-col">
+                  <span class="font-bold text-gray-800 dark:text-gray-200 text-lg">Occurrence Count</span>
+                  <span class="text-xs text-gray-500 dark:text-gray-400">Filter words by how many times they appear in this deck.</span>
+                </div>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div class="flex flex-col gap-1">
+                    <label class="text-xs text-gray-500 dark:text-gray-400 font-medium">Filter Type</label>
+                    <Select
+                      v-model="occurrenceFilterType"
+                      :options="[
+                        { label: 'Over or equal to (≥)', value: 'gte' },
+                        { label: 'Under or equal to (≤)', value: 'lte' },
+                      ]"
+                      option-value="value"
+                      option-label="label"
+                      class="w-full text-sm"
+                      size="small"
+                    />
+                  </div>
+                  <div class="flex flex-col gap-1">
+                    <label class="text-xs text-gray-500 dark:text-gray-400 font-medium">Threshold</label>
+                    <InputNumber v-model="occurrenceThreshold" :min="1" :useGrouping="false" class="w-full text-sm" size="small" />
+                  </div>
+                </div>
+                <div class="flex flex-col gap-1">
+                  <label class="text-xs text-gray-500 dark:text-gray-400 font-medium">Then Sort By</label>
+                  <Select v-model="deckOrder" :options="deckOrders" option-value="value" option-label="label" class="w-full text-sm" size="small" />
+                </div>
               </div>
             </div>
 
@@ -518,7 +602,7 @@
       <!-- FOOTER -->
       <div class="bg-gray-50 dark:bg-gray-900 border-t border-gray-200 dark:border-gray-700 p-4 flex flex-col sm:flex-row justify-between items-center gap-4 shrink-0">
         <div class="text-sm text-gray-600 dark:text-gray-300">
-          <span v-if="downloadMode !== 'target'">
+          <span>
             Result: approx <span class="font-bold text-gray-900 dark:text-gray-100">{{ currentCardAmount }}</span> {{ isLearn ? 'words' : 'cards' }}
           </span>
         </div>

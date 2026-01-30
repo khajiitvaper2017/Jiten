@@ -10,6 +10,8 @@ export function getDownloadTypeText(downloadType: DeckDownloadType): string {
       return 'Top Deck Frequency';
     case DeckDownloadType.TopChronological:
       return 'Top Chronological';
+    case DeckDownloadType.OccurrenceCount:
+      return 'Occurrence Count';
     default:
       return 'Unknown';
   }
