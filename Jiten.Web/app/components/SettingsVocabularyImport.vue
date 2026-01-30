@@ -9,8 +9,6 @@
   import { useToast } from 'primevue/usetoast';
   import AnkiConnectImport from '~/components/AnkiConnectImport.vue';
   import type { FsrsExportDto, FsrsImportResultDto } from '~/types/types';
-  import { WordSetStateType } from '~/types/enums';
-
   const toast = useToast();
 
   const frequencyRange = defineModel<number[]>('frequencyRange');
@@ -20,7 +18,6 @@
   const { $api } = useNuxtApp();
   const confirm = useConfirm();
   const { JpdbApiClient } = useJpdbApi();
-  const { subscriptions, fetchSubscriptions } = useWordSets();
   const authStore = useAuthStore();
 
   const youngWordsAmount = ref(0);
@@ -35,25 +32,14 @@
   const totalWordsAmount = computed(() => youngWordsAmount.value + matureWordsAmount.value + masteredWordsAmount.value + blacklistedWordsAmount.value);
   const totalFormsAmount = computed(() => youngFormsAmount.value + matureFormsAmount.value + masteredFormsAmount.value + blacklistedFormsAmount.value);
 
-  const wordSetMasteredWords = computed(() =>
-    Math.min(
-      subscriptions.value.filter(s => s.state === WordSetStateType.Mastered).reduce((sum, s) => sum + s.wordCount, 0),
-      masteredWordsAmount.value,
-    )
-  );
-  const wordSetBlacklistedWords = computed(() =>
-    Math.min(
-      subscriptions.value.filter(s => s.state === WordSetStateType.Blacklisted).reduce((sum, s) => sum + s.wordCount, 0),
-      blacklistedWordsAmount.value,
-    )
-  );
-  const hasWordSetSubscriptions = computed(() => subscriptions.value.length > 0);
+  const wordSetMasteredWords = ref(0);
+  const wordSetMasteredForms = ref(0);
+  const wordSetBlacklistedWords = ref(0);
+  const wordSetBlacklistedForms = ref(0);
+  const hasWordSetContributions = computed(() => wordSetMasteredWords.value > 0 || wordSetBlacklistedWords.value > 0);
 
   onMounted(async () => {
     await fetchKnownWordsAmount();
-    if (authStore.isAuthenticated) {
-      fetchSubscriptions();
-    }
   });
 
   async function fetchKnownWordsAmount() {
@@ -67,6 +53,10 @@
         matureForm: number;
         masteredForm: number;
         blacklistedForm: number;
+        wordSetMastered: number;
+        wordSetMasteredForm: number;
+        wordSetBlacklisted: number;
+        wordSetBlacklistedForm: number;
       }>('user/vocabulary/known-ids/amount');
       youngWordsAmount.value = result.young;
       matureWordsAmount.value = result.mature;
@@ -76,7 +66,13 @@
       matureFormsAmount.value = result.matureForm;
       masteredFormsAmount.value = result.masteredForm;
       blacklistedFormsAmount.value = result.blacklistedForm;
-    } catch {}
+      wordSetMasteredWords.value = result.wordSetMastered;
+      wordSetMasteredForms.value = result.wordSetMasteredForm;
+      wordSetBlacklistedWords.value = result.wordSetBlacklisted;
+      wordSetBlacklistedForms.value = result.wordSetBlacklistedForm;
+    } catch {} finally {
+      vocabStatsLoading.value = false;
+    }
   }
 
   async function clearKnownWords() {
@@ -104,6 +100,10 @@
           matureFormsAmount.value = 0;
           masteredFormsAmount.value = 0;
           blacklistedFormsAmount.value = 0;
+          wordSetMasteredWords.value = 0;
+          wordSetMasteredForms.value = 0;
+          wordSetBlacklistedWords.value = 0;
+          wordSetBlacklistedForms.value = 0;
         } catch (e) {
           console.error(e);
           toast.add({ severity: 'error', summary: 'Error', detail: 'Failed to clear known words on server.', life: 5000 });
@@ -113,6 +113,7 @@
     });
   }
 
+  const vocabStatsLoading = ref(true);
   const isLoading = ref(false);
   const jpdbApiKey = ref('');
   const blacklistedAsKnown = ref(true);
@@ -540,28 +541,47 @@
         </div>
       </template>
       <template #subtitle>
-        <p class="text-gray-600 dark:text-gray-300">
-          You're currently tracking <span class="font-extrabold text-primary-600 dark:text-primary-300">{{ totalWordsAmount }}</span> words under
-          <b>{{ totalFormsAmount }}</b> forms. Of them,
-        </p>
-        <ul class="text-gray-600 dark:text-gray-300 space-y-1 ml-3">
-          <li>
-            <span class="font-extrabold text-yellow-600 dark:text-yellow-300">{{ youngWordsAmount }}</span> are young (<b>{{ youngFormsAmount }}</b> forms).
-          </li>
-          <li>
-            <span class="font-extrabold text-green-600 dark:text-green-300">{{ matureWordsAmount }}</span> are mature (<b>{{ matureFormsAmount }}</b> forms).
-          </li>
-          <li>
-            <span class="font-extrabold text-green-600 dark:text-green-300">{{ masteredWordsAmount }}</span> are mastered (<b>{{ masteredFormsAmount }}</b>
-            forms)<template v-if="wordSetMasteredWords > 0"><span class="text-sm text-muted-color"> — includes ~{{ wordSetMasteredWords }} from word sets</span></template>.
-          </li>
-          <li>
-            <span class="font-extrabold text-gray-600 dark:text-gray-300">{{ blacklistedWordsAmount }}</span> are blacklisted (<b>{{
-              blacklistedFormsAmount
-            }}</b>
-            forms)<template v-if="wordSetBlacklistedWords > 0"><span class="text-sm text-muted-color"> — includes ~{{ wordSetBlacklistedWords }} from word sets</span></template>.
-          </li>
-        </ul>
+        <div v-if="vocabStatsLoading" class="flex flex-col items-center gap-2 py-4">
+          <ProgressSpinner style="width: 2rem; height: 2rem" stroke-width="4" />
+          <span class="text-gray-600 dark:text-gray-300">Loading vocabulary stats...</span>
+        </div>
+        <template v-else>
+          <p class="text-gray-600 dark:text-gray-300">
+            You're currently tracking <span class="font-extrabold text-primary-600 dark:text-primary-300">{{ totalWordsAmount }}</span> words under
+            <b>{{ totalFormsAmount }}</b> forms. Of them,
+          </p>
+          <ul class="text-gray-600 dark:text-gray-300 space-y-1 ml-3">
+            <li>
+              <span class="font-extrabold text-yellow-600 dark:text-yellow-300">{{ youngWordsAmount }}</span> are young (<b>{{ youngFormsAmount }}</b> forms).
+            </li>
+            <li>
+              <span class="font-extrabold text-green-600 dark:text-green-300">{{ matureWordsAmount }}</span> are mature (<b>{{ matureFormsAmount }}</b> forms).
+            </li>
+            <li>
+              <span class="font-extrabold text-green-600 dark:text-green-300">{{ masteredWordsAmount }}</span> are mastered (<b>{{ masteredFormsAmount }}</b>
+              forms).
+            </li>
+            <li>
+              <span class="font-extrabold text-gray-600 dark:text-gray-300">{{ blacklistedWordsAmount }}</span> are blacklisted (<b>{{
+                blacklistedFormsAmount
+              }}</b>
+              forms).
+            </li>
+          </ul>
+          <template v-if="hasWordSetContributions">
+            <p class="text-gray-600 dark:text-gray-300 mt-2">
+              Additionally, word sets contribute <span class="font-extrabold text-primary-600 dark:text-primary-300">{{ wordSetMasteredWords + wordSetBlacklistedWords }}</span> words to your coverage:
+            </p>
+            <ul class="text-gray-600 dark:text-gray-300 space-y-1 ml-3">
+              <li v-if="wordSetMasteredWords > 0">
+                <span class="font-extrabold text-green-600 dark:text-green-300">{{ wordSetMasteredWords }}</span> mastered (<b>{{ wordSetMasteredForms }}</b> forms)
+              </li>
+              <li v-if="wordSetBlacklistedWords > 0">
+                <span class="font-extrabold text-gray-600 dark:text-gray-300">{{ wordSetBlacklistedWords }}</span> blacklisted (<b>{{ wordSetBlacklistedForms }}</b> forms)
+              </li>
+            </ul>
+          </template>
+        </template>
       </template>
       <template #content>
         <p class="mb-3">You can upload a list of known words to calculate coverage and exclude them from downloads using one of the options below.</p>

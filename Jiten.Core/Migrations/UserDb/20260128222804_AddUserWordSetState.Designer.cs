@@ -3,6 +3,7 @@ using System;
 using Jiten.Core;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Jiten.Core.Migrations.UserDb
 {
     [DbContext(typeof(UserDbContext))]
-    partial class UserDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260128222804_AddUserWordSetState")]
+    partial class AddUserWordSetState
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -325,33 +328,6 @@ namespace Jiten.Core.Migrations.UserDb
                     b.ToTable("UserCoverages", "user");
                 });
 
-            modelBuilder.Entity("Jiten.Core.Data.UserCoverageChunk", b =>
-                {
-                    b.Property<Guid>("UserId")
-                        .HasColumnType("uuid");
-
-                    b.Property<short>("Metric")
-                        .HasColumnType("smallint");
-
-                    b.Property<int>("ChunkIndex")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime>("ComputedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.PrimitiveCollection<short[]>("Values")
-                        .IsRequired()
-                        .HasColumnType("smallint[]");
-
-                    b.HasKey("UserId", "Metric", "ChunkIndex")
-                        .HasName("PK_UserCoverageChunks");
-
-                    b.HasIndex("UserId")
-                        .HasDatabaseName("IX_UserCoverageChunks_UserId");
-
-                    b.ToTable("UserCoverageChunks", "user");
-                });
-
             modelBuilder.Entity("Jiten.Core.Data.UserDeckPreference", b =>
                 {
                     b.Property<Guid>("UserId")
@@ -432,12 +408,6 @@ namespace Jiten.Core.Migrations.UserDb
                 {
                     b.Property<Guid>("UserId")
                         .HasColumnType("uuid");
-
-                    b.Property<bool>("CoverageDirty")
-                        .HasColumnType("boolean");
-
-                    b.Property<DateTime?>("CoverageDirtyAt")
-                        .HasColumnType("timestamp with time zone");
 
                     b.Property<DateTime?>("CoverageRefreshedAt")
                         .HasColumnType("timestamp with time zone");

@@ -27,6 +27,7 @@
 
   const store = useJitenStore();
   const authStore = useAuthStore();
+  const localiseTitle = useLocaliseTitle();
 
   const displayAdminFunctions = computed(() => store.displayAdminFunctions);
   const readingSpeed = computed(() => store.readingSpeed);
@@ -123,6 +124,18 @@
     isDescriptionExpanded.value = !isDescriptionExpanded.value;
   };
 
+  const combinedCoverage = computed(() => Math.min(props.deck.coverage + props.deck.youngCoverage, 100));
+  const combinedUniqueCoverage = computed(() => Math.min(props.deck.uniqueCoverage + props.deck.youngUniqueCoverage, 100));
+
+  const coverageTooltip = computed(() =>
+    `Mature: ${((props.deck.wordCount * props.deck.coverage) / 100).toFixed(0)} / ${props.deck.wordCount} (${props.deck.coverage.toFixed(1)}%)` +
+    `\nYoung: ${((props.deck.wordCount * props.deck.youngCoverage) / 100).toFixed(0)} / ${props.deck.wordCount} (${props.deck.youngCoverage.toFixed(1)}%)` +
+    `\nTotal: ${combinedCoverage.value.toFixed(1)}%`);
+  const uniqueCoverageTooltip = computed(() =>
+    `Mature: ${((props.deck.uniqueWordCount * props.deck.uniqueCoverage) / 100).toFixed(0)} / ${props.deck.uniqueWordCount} (${props.deck.uniqueCoverage.toFixed(1)}%)` +
+    `\nYoung: ${((props.deck.uniqueWordCount * props.deck.youngUniqueCoverage) / 100).toFixed(0)} / ${props.deck.uniqueWordCount} (${props.deck.youngUniqueCoverage.toFixed(1)}%)` +
+    `\nTotal: ${combinedUniqueCoverage.value.toFixed(1)}%`);
+
   const borderColor = computed(() => {
     if (!authStore.isAuthenticated || store.hideCoverageBorders || (props.deck.coverage == 0 && props.deck.uniqueCoverage == 0)) return 'none';
     return getCoverageBorder(props.deck.coverage);
@@ -192,30 +205,26 @@
                 />
                 <div>{{ formatDateAsYyyyMmDd(new Date(deck.releaseDate)).replace(/-/g, '/') }}</div>
                 <template v-if="authStore.isAuthenticated && (deck.coverage != 0 || deck.uniqueCoverage != 0)">
-                  <div>
+                  <Tooltip :content="coverageTooltip" block>
                     <div class="text-gray-600 dark:text-gray-300 truncate pr-2 font-medium">Coverage</div>
-                    <div
-                      v-tooltip="`${((deck.wordCount * deck.coverage) / 100).toFixed(0)} / ${deck.wordCount}`"
-                      class="relative w-full bg-gray-400 dark:bg-gray-700 rounded-lg h-6 overflow-hidden"
-                    >
-                      <div class="bg-purple-500 h-6 rounded-lg transition-all duration-700" :style="{ width: deck.coverage.toFixed(1) + '%' }"></div>
-                      <span class="absolute inset-0 flex items-center pl-2 text-xs font-bold text-white dark:text-white">
+                    <div class="relative w-full bg-gray-400 dark:bg-gray-700 rounded-lg h-6 overflow-hidden">
+                      <div class="absolute bg-purple-500/40 h-6 rounded-lg transition-all duration-700" :style="{ width: combinedCoverage.toFixed(1) + '%' }"></div>
+                      <div class="absolute bg-purple-500 h-6 rounded-lg transition-all duration-700" :style="{ width: deck.coverage.toFixed(1) + '%' }"></div>
+                      <span class="absolute inset-0 flex items-center pl-2 text-xs font-bold text-white dark:text-white z-10">
                         {{ deck.coverage.toFixed(1) }}%
                       </span>
                     </div>
-                  </div>
-                  <div>
+                  </Tooltip>
+                  <Tooltip :content="uniqueCoverageTooltip" block>
                     <div class="text-gray-600 dark:text-gray-300 truncate pr-2 font-medium">Unique coverage</div>
-                    <div
-                      v-tooltip="`${((deck.uniqueWordCount * deck.uniqueCoverage) / 100).toFixed(0)} / ${deck.uniqueWordCount}`"
-                      class="relative w-full bg-gray-400 dark:bg-gray-700 rounded-lg h-6 overflow-hidden"
-                    >
-                      <div class="bg-purple-500 h-6 rounded-lg transition-all duration-700" :style="{ width: deck.uniqueCoverage.toFixed(1) + '%' }"></div>
-                      <span class="absolute inset-0 flex items-center pl-2 text-xs font-bold text-white dark:text-white">
+                    <div class="relative w-full bg-gray-400 dark:bg-gray-700 rounded-lg h-6 overflow-hidden">
+                      <div class="absolute bg-purple-500/40 h-6 rounded-lg transition-all duration-700" :style="{ width: combinedUniqueCoverage.toFixed(1) + '%' }"></div>
+                      <div class="absolute bg-purple-500 h-6 rounded-lg transition-all duration-700" :style="{ width: deck.uniqueCoverage.toFixed(1) + '%' }"></div>
+                      <span class="absolute inset-0 flex items-center pl-2 text-xs font-bold text-white dark:text-white z-10">
                         {{ deck.uniqueCoverage.toFixed(1) }}%
                       </span>
                     </div>
-                  </div>
+                  </Tooltip>
                 </template>
               </div>
               <div>
@@ -340,6 +349,28 @@
                 <div v-if="sortedLinks.length" class="mt-4 flex flex-col md:flex-row gap-4">
                   <a v-for="link in sortedLinks" :key="link.url" :href="link.url" target="_blank">{{ getLinkTypeText(link.linkType) }}</a>
                 </div>
+                <template v-if="isCompact && authStore.isAuthenticated && (deck.coverage != 0 || deck.uniqueCoverage != 0)">
+                  <Tooltip :content="coverageTooltip" block>
+                    <div class="text-gray-600 dark:text-gray-300 truncate pr-2 font-medium">Coverage</div>
+                    <div class="relative w-full bg-gray-400 dark:bg-gray-700 rounded-lg h-6 overflow-hidden">
+                      <div class="absolute bg-purple-500/40 h-6 rounded-lg transition-all duration-700" :style="{ width: combinedCoverage.toFixed(1) + '%' }"></div>
+                      <div class="absolute bg-purple-500 h-6 rounded-lg transition-all duration-700" :style="{ width: deck.coverage.toFixed(1) + '%' }"></div>
+                      <span class="absolute inset-0 flex items-center pl-2 text-xs font-bold text-white dark:text-white z-10">
+                        {{ deck.coverage.toFixed(1) }}%
+                      </span>
+                    </div>
+                  </Tooltip>
+                  <Tooltip :content="uniqueCoverageTooltip" block>
+                    <div class="text-gray-600 dark:text-gray-300 truncate pr-2 font-medium">Unique coverage</div>
+                    <div class="relative w-full bg-gray-400 dark:bg-gray-700 rounded-lg h-6 overflow-hidden">
+                      <div class="absolute bg-purple-500/40 h-6 rounded-lg transition-all duration-700" :style="{ width: combinedUniqueCoverage.toFixed(1) + '%' }"></div>
+                      <div class="absolute bg-purple-500 h-6 rounded-lg transition-all duration-700" :style="{ width: deck.uniqueCoverage.toFixed(1) + '%' }"></div>
+                      <span class="absolute inset-0 flex items-center pl-2 text-xs font-bold text-white dark:text-white z-10">
+                        {{ deck.uniqueCoverage.toFixed(1) }}%
+                      </span>
+                    </div>
+                  </Tooltip>
+                </template>
                 <div v-if="!hideControl" class="mt-4">
                   <div class="flex flex-col md:flex-row gap-2" :class="{ 'justify-center': isCompact }">
                     <Tooltip content="Details">

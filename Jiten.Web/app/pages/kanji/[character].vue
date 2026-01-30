@@ -1,8 +1,8 @@
 <script setup lang="ts">
   import type { Kanji, WordSummary } from '~/types';
-  import { convertToRuby } from '~/utils/convertToRuby';
 
   const route = useRoute();
+  const convertToRuby = useConvertToRuby();
 
   const character = computed(() => {
     const c = route.params.character;

@@ -11,7 +11,6 @@ using Jiten.Core;
 using Jiten.Core.Data;
 using Jiten.Core.Data.FSRS;
 using Jiten.Core.Data.JMDict;
-using Jiten.Core.Data.User;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
@@ -550,18 +549,19 @@ public class MediaDeckController(
 
         Dictionary<int, float> coverageDict = new();
         Dictionary<int, float> uniqueCoverageDict = new();
+        Dictionary<int, float> youngCoverageDict = new();
+        Dictionary<int, float> youngUniqueCoverageDict = new();
 
         if (currentUserService.IsAuthenticated)
         {
             var allDeckIds = await query.Select(d => d.DeckId).ToListAsync();
             var userId = currentUserService.UserId!;
-            var coverageList = await userContext.UserCoverages
-                                                .AsNoTracking()
-                                                .Where(uc => uc.UserId == userId && allDeckIds.Contains(uc.DeckId))
-                                                .Select(uc => new { uc.DeckId, uc.Coverage, uc.UniqueCoverage })
-                                                .ToListAsync();
-            coverageDict = coverageList.ToDictionary(x => x.DeckId, x => (float)x.Coverage);
-            uniqueCoverageDict = coverageList.ToDictionary(x => x.DeckId, x => (float)x.UniqueCoverage);
+
+            var coverages = await UserCoverageChunkHelper.GetCoverage(userContext, userId, allDeckIds);
+            coverageDict = coverages.MatureCoverage;
+            uniqueCoverageDict = coverages.MatureUniqueCoverage;
+            youngCoverageDict = coverages.YoungCoverage;
+            youngUniqueCoverageDict = coverages.YoungUniqueCoverage;
 
             // Apply coverage filters
             if (coverageMin != null || coverageMax != null)
@@ -590,14 +590,14 @@ public class MediaDeckController(
             {
                 bool sortByUnique = sortBy == "uCoverage";
                 return await HandleCoverageSorting(query, projectedQuery, sortOrder, offset ?? 0, pageSize, coverageDict,
-                                                   uniqueCoverageDict, sortByUnique, allUserPrefs);
+                                                   uniqueCoverageDict, youngCoverageDict, youngUniqueCoverageDict, sortByUnique, allUserPrefs);
             }
         }
 
         if (wordId != 0)
         {
             return await HandleWordBasedQuery(projectedQuery!, wordId, readingIndex, sortBy, sortOrder, offset ?? 0, pageSize, coverageDict,
-                                              uniqueCoverageDict, allUserPrefs, orderedDeckIds);
+                                              uniqueCoverageDict, youngCoverageDict, youngUniqueCoverageDict, allUserPrefs, orderedDeckIds);
         }
 
         // Handle regular queries
@@ -647,6 +647,8 @@ public class MediaDeckController(
             {
                 if (coverageDict.TryGetValue(dto.DeckId, out var c)) dto.Coverage = c;
                 if (uniqueCoverageDict.TryGetValue(dto.DeckId, out var uc)) dto.UniqueCoverage = uc;
+                if (youngCoverageDict.TryGetValue(dto.DeckId, out var yc)) dto.YoungCoverage = yc;
+                if (youngUniqueCoverageDict.TryGetValue(dto.DeckId, out var yuc)) dto.YoungUniqueCoverage = yuc;
                 if (allUserPrefs.TryGetValue(dto.DeckId, out var pref))
                 {
                     dto.Status = pref.Status;
@@ -667,6 +669,8 @@ public class MediaDeckController(
         int pageSize,
         Dictionary<int, float> coverageDict,
         Dictionary<int, float> uniqueCoverageDict,
+        Dictionary<int, float> youngCoverageDict,
+        Dictionary<int, float> youngUniqueCoverageDict,
         bool sortByUnique,
         Dictionary<int, UserDeckPreference> preferencesDict)
     {
@@ -730,8 +734,6 @@ public class MediaDeckController(
             {
                 if (currentUserService.IsAuthenticated)
                 {
-                    if (coverageDict.TryGetValue(dto.DeckId, out var c)) dto.Coverage = c;
-                    if (uniqueCoverageDict.TryGetValue(dto.DeckId, out var uc)) dto.UniqueCoverage = uc;
                     if (preferencesDict.TryGetValue(dto.DeckId, out var pref))
                     {
                         dto.Status = pref.Status;
@@ -742,8 +744,9 @@ public class MediaDeckController(
 
                 if (coverageDict.TryGetValue(dto.DeckId, out var cov)) dto.Coverage = cov;
                 if (uniqueCoverageDict.TryGetValue(dto.DeckId, out var uCov)) dto.UniqueCoverage = uCov;
+                if (youngCoverageDict.TryGetValue(dto.DeckId, out var yCov)) dto.YoungCoverage = yCov;
+                if (youngUniqueCoverageDict.TryGetValue(dto.DeckId, out var yuCov)) dto.YoungUniqueCoverage = yuCov;
             }
-
 
             return new PaginatedResponse<List<DeckDto>>(dtos, totalCount, pageSize, offset);
         }
@@ -765,8 +768,6 @@ public class MediaDeckController(
             {
                 if (currentUserService.IsAuthenticated)
                 {
-                    if (coverageDict.TryGetValue(dto.DeckId, out var c)) dto.Coverage = c;
-                    if (uniqueCoverageDict.TryGetValue(dto.DeckId, out var uc)) dto.UniqueCoverage = uc;
                     if (preferencesDict.TryGetValue(dto.DeckId, out var pref))
                     {
                         dto.Status = pref.Status;
@@ -777,6 +778,8 @@ public class MediaDeckController(
 
                 if (coverageDict.TryGetValue(dto.DeckId, out var cov)) dto.Coverage = cov;
                 if (uniqueCoverageDict.TryGetValue(dto.DeckId, out var uCov)) dto.UniqueCoverage = uCov;
+                if (youngCoverageDict.TryGetValue(dto.DeckId, out var yCov)) dto.YoungCoverage = yCov;
+                if (youngUniqueCoverageDict.TryGetValue(dto.DeckId, out var yuCov)) dto.YoungUniqueCoverage = yuCov;
             }
 
             return new PaginatedResponse<List<DeckDto>>(dtos, totalCount, pageSize, offset);
@@ -884,6 +887,7 @@ public class MediaDeckController(
     private async Task<PaginatedResponse<List<DeckDto>>> HandleWordBasedQuery(
         IQueryable<DeckWithOccurrences> projectedQuery, int wordId, int readingIndex, string sortBy, SortOrder sortOrder, int offset,
         int pageSize, Dictionary<int, float> coverageDict, Dictionary<int, float> uniqueCoverageDict,
+        Dictionary<int, float> youngCoverageDict, Dictionary<int, float> youngUniqueCoverageDict,
         Dictionary<int, UserDeckPreference> preferencesDict, List<int>? orderedDeckIds)
     {
         // Apply sorting to the projected query
@@ -1005,6 +1009,8 @@ public class MediaDeckController(
             {
                 if (coverageDict.TryGetValue(dto.DeckId, out var c)) dto.Coverage = c;
                 if (uniqueCoverageDict.TryGetValue(dto.DeckId, out var uc)) dto.UniqueCoverage = uc;
+                if (youngCoverageDict.TryGetValue(dto.DeckId, out var yc)) dto.YoungCoverage = yc;
+                if (youngUniqueCoverageDict.TryGetValue(dto.DeckId, out var yuc)) dto.YoungUniqueCoverage = yuc;
                 if (preferencesDict.TryGetValue(dto.DeckId, out var pref))
                 {
                     dto.Status = pref.Status;
@@ -1055,29 +1061,21 @@ public class MediaDeckController(
 
             var knownStates = await currentUserService.GetKnownWordsState(deckWordKeys);
 
-            var distinctWordIds = deckWordKeys.Select(k => k.WordId).Distinct().ToList();
-            var fsrsStates = await userContext.FsrsCards
-                                              .AsNoTracking()
-                                              .Where(uk => uk.UserId == userId && distinctWordIds.Contains(uk.WordId))
-                                              .Select(uk => new { uk.WordId, uk.ReadingIndex, uk.State })
-                                              .ToDictionaryAsync(uk => (uk.WordId, uk.ReadingIndex), uk => uk.State);
-
             query = allDeckWords.AsQueryable();
 
             query = query.AsEnumerable().Where(dw =>
             {
                 var key = (dw.WordId, dw.ReadingIndex);
                 var knownState = knownStates.GetValueOrDefault(key, [KnownState.New]);
-                var fsrsState = fsrsStates.GetValueOrDefault(key);
 
                 return displayFilter switch
                 {
-                    "known" => !knownState.Contains(KnownState.New) && fsrsStates.ContainsKey(key),
+                    "known" => !knownState.Contains(KnownState.New),
                     "young" => knownState.Contains(KnownState.Young),
                     "mature" => knownState.Contains(KnownState.Mature),
                     "mastered" => knownState.Contains(KnownState.Mastered),
                     "blacklisted" => knownState.Contains(KnownState.Blacklisted),
-                    "unknown" => !fsrsStates.ContainsKey(key),
+                    "unknown" => knownState.Contains(KnownState.New),
                     _ => true
                 };
             }).AsQueryable();
@@ -1186,7 +1184,7 @@ public class MediaDeckController(
     // [ResponseCache(Duration = 600, VaryByQueryKeys = ["id", "offset"])]
     [SwaggerOperation(Summary = "Get deck details")]
     [ProducesResponseType(typeof(PaginatedResponse<DeckDetailDto?>), StatusCodes.Status200OK)]
-    public PaginatedResponse<DeckDetailDto?> GetMediaDeckDetail(int id, int? offset = 0)
+    public async Task<PaginatedResponse<DeckDetailDto?>> GetMediaDeckDetail(int id, int? offset = 0)
     {
         int pageSize = 25;
 
@@ -1229,20 +1227,22 @@ public class MediaDeckController(
             var userId = currentUserService.UserId!;
             var ids = new List<int> { mainDeckDto.DeckId };
             ids.AddRange(subdeckDtos.Select(d => d.DeckId));
-            var coverages = userContext.UserCoverages.AsNoTracking()
-                                       .Where(uc => uc.UserId == userId && ids.Contains(uc.DeckId))
-                                       .Select(uc => new { uc.DeckId, uc.Coverage, uc.UniqueCoverage })
-                                       .ToList();
-            var coverageDict = coverages.ToDictionary(x => x.DeckId, x => (float)x.Coverage);
-            var uCoverageDict = coverages.ToDictionary(x => x.DeckId, x => (float)x.UniqueCoverage);
 
-            var preferences = userContext.UserDeckPreferences.AsNoTracking()
+            var coverages = await UserCoverageChunkHelper.GetCoverage(userContext, userId, ids);
+            var coverageDict = coverages.MatureCoverage;
+            var uCoverageDict = coverages.MatureUniqueCoverage;
+            var yCoverageDict = coverages.YoungCoverage;
+            var yUCoverageDict = coverages.YoungUniqueCoverage;
+
+            var preferences = await userContext.UserDeckPreferences.AsNoTracking()
                                          .Where(p => p.UserId == userId && ids.Contains(p.DeckId))
-                                         .ToList();
+                                         .ToListAsync();
             var preferencesDict = preferences.ToDictionary(p => p.DeckId);
 
             if (coverageDict.TryGetValue(mainDeckDto.DeckId, out var mc)) mainDeckDto.Coverage = mc;
             if (uCoverageDict.TryGetValue(mainDeckDto.DeckId, out var muc)) mainDeckDto.UniqueCoverage = muc;
+            if (yCoverageDict.TryGetValue(mainDeckDto.DeckId, out var myc)) mainDeckDto.YoungCoverage = myc;
+            if (yUCoverageDict.TryGetValue(mainDeckDto.DeckId, out var myuc)) mainDeckDto.YoungUniqueCoverage = myuc;
             if (preferencesDict.TryGetValue(mainDeckDto.DeckId, out var mpref))
             {
                 mainDeckDto.Status = mpref.Status;
@@ -1254,6 +1254,8 @@ public class MediaDeckController(
             {
                 if (coverageDict.TryGetValue(subdeckDto.DeckId, out var c)) subdeckDto.Coverage = c;
                 if (uCoverageDict.TryGetValue(subdeckDto.DeckId, out var uc)) subdeckDto.UniqueCoverage = uc;
+                if (yCoverageDict.TryGetValue(subdeckDto.DeckId, out var yc)) subdeckDto.YoungCoverage = yc;
+                if (yUCoverageDict.TryGetValue(subdeckDto.DeckId, out var yuc)) subdeckDto.YoungUniqueCoverage = yuc;
                 if (preferencesDict.TryGetValue(subdeckDto.DeckId, out var pref))
                 {
                     subdeckDto.Status = pref.Status;

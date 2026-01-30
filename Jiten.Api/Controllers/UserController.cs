@@ -7,7 +7,7 @@ using Jiten.Api.Services;
 using Jiten.Core;
 using Jiten.Core.Data.FSRS;
 using Jiten.Core.Data.JMDict;
-using Jiten.Core.Data.User;
+using Jiten.Core.Data;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -42,30 +42,125 @@ public class UserController(
         var userId = userService.UserId;
         if (string.IsNullOrEmpty(userId)) return Results.Unauthorized();
 
+        var fsrsCards = await userContext.FsrsCards
+                                         .AsNoTracking()
+                                         .Where(uk => uk.UserId == userId)
+                                         .Select(uk => new { uk.WordId, uk.ReadingIndex, uk.State, uk.Due, uk.LastReview })
+                                         .ToListAsync();
 
-        var ids = await userContext.FsrsCards
-                                   .AsNoTracking()
-                                   .Where(uk => uk.UserId == userId)
-                                   .Select(uk => new { uk.WordId, uk.ReadingIndex })
-                                   .ToListAsync();
+        var now = DateTime.UtcNow;
 
+        // Build effective state per (WordId, ReadingIndex) form.
+        // FSRS cards take precedence over WordSet membership per form.
+        var effectiveForms = new Dictionary<(int WordId, int ReadingIndex), KnownState>();
+        foreach (var c in fsrsCards)
+        {
+            effectiveForms[(c.WordId, c.ReadingIndex)] =
+                ComputeEffectiveCategory(c.State, c.Due, c.LastReview, now) ?? KnownState.New;
+        }
 
-        var states = await userService.GetKnownWordsState(ids.Select(i => (i.WordId, i.ReadingIndex)).ToList());
-        var statesDistinct = states.DistinctBy(s => s.Key.WordId).ToList();
+        // Count FSRS-only forms and words
+        int youngForms = 0, matureForms = 0, masteredForms = 0, blacklistedForms = 0;
+        foreach (var state in effectiveForms.Values)
+        {
+            switch (state)
+            {
+                case KnownState.Young: youngForms++; break;
+                case KnownState.Mature: matureForms++; break;
+                case KnownState.Mastered: masteredForms++; break;
+                case KnownState.Blacklisted: blacklistedForms++; break;
+            }
+        }
 
-        KnownWordAmountDto dto = new KnownWordAmountDto
-                                 {
-                                     Young = statesDistinct.Count(s => s.Value.Contains(KnownState.Young)),
-                                     YoungForm = states.Count(s => s.Value.Contains(KnownState.Young)),
-                                     Mature = statesDistinct.Count(s => s.Value.Contains(KnownState.Mature)),
-                                     MatureForm = states.Count(s => s.Value.Contains(KnownState.Mature)),
-                                     Mastered = statesDistinct.Count(s => s.Value.Contains(KnownState.Mastered)),
-                                     MasteredForm = states.Count(s => s.Value.Contains(KnownState.Mastered)),
-                                     Blacklisted = statesDistinct.Count(s => s.Value.Contains(KnownState.Blacklisted)),
-                                     BlacklistedForm = states.Count(s => s.Value.Contains(KnownState.Blacklisted))
-                                 };
+        int youngWords = 0, matureWords = 0, masteredWords = 0, blacklistedWords = 0;
+        foreach (var wordGroup in effectiveForms.GroupBy(kvp => kvp.Key.WordId))
+        {
+            var best = wordGroup.Max(kvp => kvp.Value);
+            switch (best)
+            {
+                case KnownState.Young: youngWords++; break;
+                case KnownState.Mature: matureWords++; break;
+                case KnownState.Mastered: masteredWords++; break;
+                case KnownState.Blacklisted: blacklistedWords++; break;
+            }
+        }
 
-        return Results.Ok(dto);
+        var fsrsWordIds = new HashSet<int>(effectiveForms.Keys.Select(k => k.WordId));
+
+        // Word set contributions (only forms/words not already in FSRS)
+        int wsMasteredForms = 0, wsBlacklistedForms = 0;
+        var wsMasteredWordIds = new HashSet<int>();
+        var wsBlacklistedWordIds = new HashSet<int>();
+
+        var userSetStates = await userContext.UserWordSetStates
+            .Where(uwss => uwss.UserId == userId)
+            .ToListAsync();
+
+        if (userSetStates.Count > 0)
+        {
+            var masteredSetIds = userSetStates
+                .Where(s => s.State == WordSetStateType.Mastered).Select(s => s.SetId).ToList();
+            var blacklistedSetIds = userSetStates
+                .Where(s => s.State == WordSetStateType.Blacklisted).Select(s => s.SetId).ToList();
+
+            if (masteredSetIds.Count > 0)
+            {
+                var masteredSetForms = await jitenContext.WordSetMembers
+                    .Where(wsm => masteredSetIds.Contains(wsm.SetId))
+                    .Select(wsm => new { wsm.WordId, ReadingIndex = (int)wsm.ReadingIndex })
+                    .Distinct()
+                    .ToListAsync();
+
+                foreach (var m in masteredSetForms)
+                {
+                    var key = (m.WordId, m.ReadingIndex);
+                    if (!effectiveForms.ContainsKey(key))
+                    {
+                        effectiveForms[key] = KnownState.Mastered;
+                        wsMasteredForms++;
+                        if (!fsrsWordIds.Contains(m.WordId))
+                            wsMasteredWordIds.Add(m.WordId);
+                    }
+                }
+            }
+
+            if (blacklistedSetIds.Count > 0)
+            {
+                var blacklistedSetForms = await jitenContext.WordSetMembers
+                    .Where(wsm => blacklistedSetIds.Contains(wsm.SetId))
+                    .Select(wsm => new { wsm.WordId, ReadingIndex = (int)wsm.ReadingIndex })
+                    .Distinct()
+                    .ToListAsync();
+
+                foreach (var m in blacklistedSetForms)
+                {
+                    var key = (m.WordId, m.ReadingIndex);
+                    if (!effectiveForms.ContainsKey(key))
+                    {
+                        effectiveForms[key] = KnownState.Blacklisted;
+                        wsBlacklistedForms++;
+                        if (!fsrsWordIds.Contains(m.WordId))
+                            wsBlacklistedWordIds.Add(m.WordId);
+                    }
+                }
+            }
+        }
+
+        return Results.Ok(new KnownWordAmountDto
+                          {
+                              Young = youngWords,
+                              YoungForm = youngForms,
+                              Mature = matureWords,
+                              MatureForm = matureForms,
+                              Mastered = masteredWords,
+                              MasteredForm = masteredForms,
+                              Blacklisted = blacklistedWords,
+                              BlacklistedForm = blacklistedForms,
+                              WordSetMastered = wsMasteredWordIds.Count,
+                              WordSetMasteredForm = wsMasteredForms,
+                              WordSetBlacklisted = wsBlacklistedWordIds.Count,
+                              WordSetBlacklistedForm = wsBlacklistedForms
+                          });
     }
 
     /// <summary>
@@ -109,6 +204,8 @@ public class UserController(
         userContext.FsrsCards.RemoveRange(cards);
         await userContext.SaveChangesAsync();
 
+        await CoverageDirtyHelper.MarkCoverageDirty(userContext, userId);
+        await userContext.SaveChangesAsync();
         backgroundJobs.Enqueue<ComputationJob>(job => job.ComputeUserCoverage(userId));
 
         logger.LogInformation("User cleared all known words: UserId={UserId}, RemovedCount={RemovedCount}, RemovedLogsCount={RemovedLogsCount}",
@@ -164,6 +261,8 @@ public class UserController(
             await userContext.SaveChangesAsync();
         }
 
+        await CoverageDirtyHelper.MarkCoverageDirty(userContext, userId);
+        await userContext.SaveChangesAsync();
         backgroundJobs.Enqueue<ComputationJob>(job => job.ComputeUserCoverage(userId));
 
         logger.LogInformation("User imported words from IDs: UserId={UserId}, AddedCount={AddedCount}, SkippedCount={SkippedCount}",
@@ -216,6 +315,8 @@ public class UserController(
             : await Parser.Parser.GetWordsDirectLookup(contextFactory, validWords);
         var added = await userService.AddKnownWords(parsedWords);
 
+        await CoverageDirtyHelper.MarkCoverageDirty(userContext, userId);
+        await userContext.SaveChangesAsync();
         backgroundJobs.Enqueue<ComputationJob>(job => job.ComputeUserCoverage(userId));
 
         logger.LogInformation("User imported words from Anki TXT: UserId={UserId}, ParsedCount={ParsedCount}, AddedCount={AddedCount}",
@@ -461,6 +562,8 @@ public class UserController(
 
             await transaction.CommitAsync();
 
+            await CoverageDirtyHelper.MarkCoverageDirty(userContext, userId);
+            await userContext.SaveChangesAsync();
             backgroundJobs.Enqueue<ComputationJob>(job => job.ComputeUserCoverage(userId));
 
             logger.LogInformation(
@@ -579,6 +682,8 @@ public class UserController(
             }
         }
 
+        await CoverageDirtyHelper.MarkCoverageDirty(userContext, userId);
+        await userContext.SaveChangesAsync();
         backgroundJobs.Enqueue<ComputationJob>(job => job.ComputeUserCoverage(userId));
 
         var uniqueWords = toInsert.Select(c => c.WordId).Distinct().Count();
@@ -614,6 +719,8 @@ public class UserController(
         var userId = userService.UserId;
         if (string.IsNullOrEmpty(userId)) return Results.Unauthorized();
 
+        await CoverageDirtyHelper.MarkCoverageDirty(userContext, userId);
+        await userContext.SaveChangesAsync();
         backgroundJobs.Enqueue<ComputationJob>(job => job.ComputeUserCoverage(userId));
 
         return Results.Ok();
@@ -1087,6 +1194,8 @@ public class UserController(
             await userContext.SaveChangesAsync();
             await transaction.CommitAsync();
 
+            await CoverageDirtyHelper.MarkCoverageDirty(userContext, userId);
+            await userContext.SaveChangesAsync();
             backgroundJobs.Enqueue<ComputationJob>(job => job.ComputeUserCoverage(userId));
 
             logger.LogInformation("Import stats: Imported={Imported}, Updated={Updated}, Skipped={Skipped}",
@@ -1831,6 +1940,22 @@ public class UserController(
 
     private record CachedKanjiInfo(string Character, int? FrequencyRank, short? JlptLevel);
     private record ReadingFrequencyResult(int WordId, short ReadingIndex, int FrequencyRank);
+
+    private static KnownState? ComputeEffectiveCategory(FsrsState state, DateTime due, DateTime? lastReview, DateTime now)
+    {
+        switch (state)
+        {
+            case FsrsState.Mastered: return KnownState.Mastered;
+            case FsrsState.Blacklisted: return KnownState.Blacklisted;
+            case FsrsState.New: return null;
+        }
+
+        if (lastReview == null)
+            return null;
+
+        var interval = (due - lastReview.Value).TotalDays;
+        return interval < 21 ? KnownState.Young : KnownState.Mature;
+    }
 
     #endregion
 }

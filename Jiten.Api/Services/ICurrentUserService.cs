@@ -1,6 +1,5 @@
 using System.Security.Claims;
 using Jiten.Core.Data;
-using Jiten.Core.Data.User;
 
 namespace Jiten.Api.Services;
 

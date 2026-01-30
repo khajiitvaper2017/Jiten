@@ -29,6 +29,8 @@ export interface Deck {
   dialoguePercentage: number;
   coverage: number;
   uniqueCoverage: number;
+  youngCoverage: number;
+  youngUniqueCoverage: number;
   hideDialoguePercentage: boolean;
   externalRating: number;
   exampleSentence?: ExampleSentence;

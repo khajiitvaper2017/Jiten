@@ -1,5 +1,5 @@
 <template>
-  <div ref="referenceRef" class="inline-block">
+  <div ref="referenceRef" :class="block ? 'block' : 'inline-block'">
     <slot :toggle="toggle" :show="show" :hide="hide" />
   </div>
 
@@ -22,7 +22,7 @@
         }"
         class="z-50"
       >
-        <div class="bg-gray-900 dark:bg-gray-800 text-white px-3 py-2 rounded-lg shadow-lg text-sm max-w-xs">
+        <div class="bg-gray-900 dark:bg-gray-800 text-white px-3 py-2 rounded-lg shadow-lg text-sm max-w-sm">
           <div v-html="formattedContent" class="whitespace-pre-wrap" />
         </div>
 
@@ -52,6 +52,7 @@
     content: string;
     placement?: 'top' | 'bottom' | 'left' | 'right';
     offset?: number;
+    block?: boolean;
   }
 
   const props = withDefaults(defineProps<Props>(), {

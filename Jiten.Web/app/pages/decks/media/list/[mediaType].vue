@@ -7,6 +7,8 @@
   const mediaType = Number(route.params.mediaType);
   const url = computed(() => `media-deck/get-media-decks-by-type/${mediaType}`);
 
+  const localiseTitle = useLocaliseTitle();
+
   const { data: response, status, error } = await useApiFetch<Deck>(url.value, {});
 </script>
 

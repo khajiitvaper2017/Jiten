@@ -1,7 +1,6 @@
 using Jiten.Core;
 using Jiten.Core.Data;
 using Jiten.Core.Data.Providers;
-using Jiten.Core.Data.User;
 using Microsoft.EntityFrameworkCore;
 using Hangfire;
 using Jiten.Cli;
@@ -228,7 +227,8 @@ public class ParseJob(IDbContextFactory<JitenDbContext> contextFactory, IDbConte
         await using var userContext = await userContextFactory.CreateDbContextAsync();
 
         var userIds = await userContext.Users
-                                       .Where(u => userContext.FsrsCards.Count(c => c.UserId == u.Id) >= 10)
+                                       .Where(u => userContext.FsrsCards.Count(c => c.UserId == u.Id) >= 10 ||
+                                                   userContext.UserWordSetStates.Any(s => s.UserId == u.Id))
                                        .Select(u => u.Id)
                                        .ToListAsync();
 
