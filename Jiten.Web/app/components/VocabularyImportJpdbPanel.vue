@@ -10,6 +10,8 @@
   const blacklistedAsKnown = ref(true);
   const dueAsKnown = ref(true);
   const suspendedAsKnown = ref(false);
+  const importAdditionalReadings = ref(true);
+  const frequencyThreshold = ref(15000);
   const jpdbProgress = ref('');
 
   async function importFromJpdbApi() {
@@ -36,7 +38,10 @@
 
         const result = await $api<{ added: number; skipped: number }>('user/vocabulary/import-from-ids', {
           method: 'POST',
-          body: JSON.stringify(response),
+          body: JSON.stringify({
+            wordIds: response,
+            frequencyThreshold: importAdditionalReadings.value ? frequencyThreshold.value : null,
+          }),
           headers: { 'Content-Type': 'application/json' },
         });
 
@@ -99,6 +104,14 @@
         <div class="flex items-center">
           <Checkbox id="suspendedAsKnown" v-model="suspendedAsKnown" :binary="true" />
           <label for="suspendedAsKnown" class="ml-2">Consider <strong>suspended</strong> as known</label>
+        </div>
+        <div class="flex items-center">
+          <Checkbox id="importAdditionalReadings" v-model="importAdditionalReadings" :binary="true" />
+          <label for="importAdditionalReadings" class="ml-2">Import additional readings within frequency range of the imported reading (only the most frequent reading by default)</label>
+        </div>
+        <div v-if="importAdditionalReadings" class="ml-6 flex items-center gap-2">
+          <label for="frequencyThreshold" class="text-sm">Frequency range:</label>
+          <InputNumber id="frequencyThreshold" v-model="frequencyThreshold" :min="1000" :max="100000" :step="1000" class="w-32" />
         </div>
       </div>
 

@@ -214,17 +214,17 @@ public class UserController(
     }
 
     /// <summary>
-    /// Add known words for the current user by JMdict word IDs. ReadingIndex defaults to 0.
+    /// Add known words for the current user by JMdict word IDs, filtered by reading frequency.
     /// </summary>
     [HttpPost("vocabulary/import-from-ids")]
-    public async Task<IResult> ImportWordsFromIds([FromBody] List<long> wordIds)
+    public async Task<IResult> ImportWordsFromIds([FromBody] ImportFromIdsRequest request)
     {
         var userId = userService.UserId;
         if (string.IsNullOrEmpty(userId)) return Results.Unauthorized();
 
-        if (wordIds == null || wordIds.Count == 0) return Results.BadRequest("No word IDs provided");
+        if (request.WordIds == null || request.WordIds.Count == 0) return Results.BadRequest("No word IDs provided");
 
-        var distinctIds = wordIds.Where(id => id > 0).Distinct().ToList();
+        var distinctIds = request.WordIds.Where(id => id > 0).Distinct().ToList();
         if (distinctIds.Count == 0) return Results.BadRequest("No valid words found");
 
         var jmdictWords = await jitenContext.JMDictWords
@@ -236,6 +236,11 @@ public class UserController(
 
         var jmdictWordIds = jmdictWords.Select(w => w.WordId).ToList();
 
+        var frequencies = await jitenContext.JmDictWordFrequencies
+                                            .AsNoTracking()
+                                            .Where(f => jmdictWordIds.Contains(f.WordId))
+                                            .ToDictionaryAsync(f => f.WordId);
+
         var alreadyKnown = await userContext.FsrsCards
                                             .AsNoTracking()
                                             .Where(uk => uk.UserId == userId && jmdictWordIds.Contains(uk.WordId))
@@ -246,7 +251,9 @@ public class UserController(
 
         foreach (var word in jmdictWords)
         {
-            for (var i = 0; i < word.Readings.Count; i++)
+            var readingIndicesToImport = GetReadingIndicesToImport(word, frequencies, request.FrequencyThreshold);
+
+            foreach (var i in readingIndicesToImport)
             {
                 if (alreadyKnownSet.Contains((word.WordId, i)))
                     continue;
@@ -269,6 +276,50 @@ public class UserController(
         logger.LogInformation("User imported words from IDs: UserId={UserId}, AddedCount={AddedCount}, SkippedCount={SkippedCount}",
                               userId, toInsert.Count, alreadyKnown.Count);
         return Results.Ok(new { added = toInsert.Count, skipped = alreadyKnown.Count });
+    }
+
+    private static List<int> GetReadingIndicesToImport(
+        JmDictWord word,
+        Dictionary<int, JmDictWordFrequency> frequencies,
+        int? threshold)
+    {
+        if (word.Readings.Count <= 1)
+            return [0];
+
+        if (!frequencies.TryGetValue(word.WordId, out var freq) || freq.ReadingsFrequencyRank.Count == 0)
+            return [0];
+
+        var ranks = freq.ReadingsFrequencyRank;
+        var bestRank = int.MaxValue;
+        var bestIndex = 0;
+
+        for (var i = 0; i < ranks.Count && i < word.Readings.Count; i++)
+        {
+            if (ranks[i] > 0 && ranks[i] < bestRank)
+            {
+                bestRank = ranks[i];
+                bestIndex = i;
+            }
+        }
+
+        if (bestRank == int.MaxValue)
+            return [0];
+
+        var result = new List<int> { bestIndex };
+
+        if (threshold == null)
+            return result;
+
+        for (var i = 0; i < ranks.Count && i < word.Readings.Count; i++)
+        {
+            if (i == bestIndex)
+                continue;
+
+            if (ranks[i] > 0 && ranks[i] <= bestRank + threshold.Value)
+                result.Add(i);
+        }
+
+        return result;
     }
 
     /// <summary>
