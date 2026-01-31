@@ -39,6 +39,13 @@
     };
   });
 
+  if (import.meta.server) {
+    defineOgImageComponent('VocabularyWordOgImage', {
+      wordId: String(wordId.value),
+      readingIndex: String(readingIndex.value),
+    });
+  }
+
   const onMainReadingTextChanged = (newText: string) => {
     if (newText != undefined) {
       title.value = stripRuby(newText);
