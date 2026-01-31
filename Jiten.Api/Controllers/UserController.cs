@@ -1086,17 +1086,27 @@ public class UserController(
 
         var wordLookup = words.ToDictionary(w => w.WordId);
 
+        var frequencies = await jitenContext.JmDictWordFrequencies
+                                            .AsNoTracking()
+                                            .Where(f => wordIds.Contains(f.WordId))
+                                            .ToDictionaryAsync(f => f.WordId);
+
         var result = cards.Select(c =>
         {
             var word = wordLookup.GetValueOrDefault(c.WordId);
             var hasValidReading = word != null && c.ReadingIndex < word.Readings.Count;
+            var freq = frequencies.GetValueOrDefault(c.WordId);
+            var frequencyRank = freq != null && c.ReadingIndex < freq.ReadingsFrequencyRank.Count
+                ? freq.ReadingsFrequencyRank[c.ReadingIndex]
+                : 0;
 
             return new FsrsCardWithWordDto
                    {
                        CardId = c.CardId, WordId = c.WordId, ReadingIndex = c.ReadingIndex, State = c.State, Step = c.Step,
                        Stability = EnsureValidNumber(c.Stability), Difficulty = EnsureValidNumber(c.Difficulty), Due = c.Due,
                        LastReview = c.LastReview, WordText = hasValidReading ? word!.Readings[c.ReadingIndex] : "",
-                       ReadingType = hasValidReading ? word!.ReadingTypes[c.ReadingIndex] : JmDictReadingType.Reading
+                       ReadingType = hasValidReading ? word!.ReadingTypes[c.ReadingIndex] : JmDictReadingType.Reading,
+                       FrequencyRank = frequencyRank
                    };
         }).ToList();
 

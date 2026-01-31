@@ -309,6 +309,7 @@ export interface FsrsCardWithWordDto {
   lastReview?: Date;
   wordText: string;
   readingType: ReadingType;
+  frequencyRank: number;
 }
 
 export interface FsrsImportResultDto {

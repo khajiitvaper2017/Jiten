@@ -337,6 +337,12 @@ function getAvailableActions(card: FsrsCardWithWordDto) {
             </template>
           </Column>
 
+          <Column field="frequencyRank" header="Rank" sortable>
+            <template #body="{ data }">
+              {{ data.frequencyRank ? `#${data.frequencyRank.toLocaleString()}` : '-' }}
+            </template>
+          </Column>
+
           <Column field="state" header="State" sortable>
             <template #body="{ data }">
               <Tag
