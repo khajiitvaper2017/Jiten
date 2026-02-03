@@ -1798,6 +1798,57 @@ public class MediaDeckController(
     }
 
     /// <summary>
+    /// Returns the number of vocabulary items in a deck after applying the same filters used for downloads/learn.
+    /// </summary>
+    /// <param name="id">Deck identifier.</param>
+    /// <param name="request">Download options.</param>
+    [HttpPost("{id}/vocabulary-count")]
+    [SwaggerOperation(Summary = "Count vocabulary for download options")]
+    [ProducesResponseType(typeof(int), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IResult> GetVocabularyCount(int id, [FromBody] DeckDownloadRequest request)
+    {
+        var deck = await context.Decks.AsNoTracking().FirstOrDefaultAsync(d => d.DeckId == id);
+        if (deck == null)
+            return Results.NotFound();
+
+        var (deckWordsRaw, error) = await ResolveDeckWords(
+            id, deck,
+            request.DownloadType, DeckOrder.DeckFrequency,
+            request.MinFrequency, request.MaxFrequency,
+            request.ExcludeMatureMasteredBlacklisted, request.ExcludeAllTrackedWords,
+            request.TargetPercentage,
+            request.MinOccurrences, request.MaxOccurrences);
+
+        if (error != null)
+            return error;
+
+        if (deckWordsRaw == null || deckWordsRaw.Count == 0)
+            return Results.Ok(0);
+
+        if (request.ExcludeKana)
+        {
+            var wordIds = deckWordsRaw.Select(dw => dw.WordId).Distinct().ToList();
+            var readings = await context.JMDictWords
+                .AsNoTracking()
+                .Where(w => wordIds.Contains(w.WordId))
+                .Select(w => new { w.WordId, w.Readings })
+                .ToDictionaryAsync(w => w.WordId);
+
+            deckWordsRaw = deckWordsRaw.Where(dw =>
+            {
+                if (!readings.TryGetValue(dw.WordId, out var r)) return true;
+                if (dw.ReadingIndex >= r.Readings.Count) return true;
+                return !WanaKana.IsKana(r.Readings[dw.ReadingIndex]);
+            }).ToList();
+        }
+
+        return Results.Ok(deckWordsRaw.Count);
+    }
+
+    /// <summary>
     /// Gets decks from sliding 30-day windows based on offset for display in the update log
     /// </summary>
     /// <param name="offset">Window offset: 0 = last 30 days, 1 = days 30-60 ago, 2 = days 60-90 ago, etc.</param>
