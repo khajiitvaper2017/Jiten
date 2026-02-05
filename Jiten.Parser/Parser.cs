@@ -945,20 +945,20 @@ namespace Jiten.Parser
                 if (wordData.wordInfo.IsPersonNameContext && nameCandidates.Count > 0)
                 {
                     bestMatch = nameCandidates.OrderByDescending(m => m.GetPriorityScore(WanaKana.IsKana(wordData.wordInfo.Text)) +
-                                                                     (m.Readings.All(r => r != wordData.wordInfo.Text) ? -50 : 0))
+                                                                     (m.Forms.All(f => f.Text != wordData.wordInfo.Text) ? -50 : 0))
                                               .First();
                 }
                 else if (compatibleNonNameMatches.Count > 0)
                 {
                     bestMatch = compatibleNonNameMatches
                         .OrderByDescending(m => m.GetPriorityScore(WanaKana.IsKana(wordData.wordInfo.Text)) +
-                                               (m.Readings.All(r => r != wordData.wordInfo.Text) ? -50 : 0))
+                                               (m.Forms.All(f => f.Text != wordData.wordInfo.Text) ? -50 : 0))
                         .First();
                 }
                 else if (!hasAnyNonNameCandidate && nameCandidates.Count > 0)
                 {
                     bestMatch = nameCandidates.OrderByDescending(m => m.GetPriorityScore(WanaKana.IsKana(wordData.wordInfo.Text)) +
-                                                                     (m.Readings.All(r => r != wordData.wordInfo.Text) ? -50 : 0))
+                                                                     (m.Forms.All(f => f.Text != wordData.wordInfo.Text) ? -50 : 0))
                                               .First();
                 }
                 else
@@ -968,31 +968,26 @@ namespace Jiten.Parser
                     return (false, null);
                 }
 
-                var normalizedReadings =
-                    bestMatch.Readings.ToList();
-                byte readingIndex = (byte)normalizedReadings.IndexOf(text);
+                byte readingIndex = (byte)(bestMatch.Forms.FirstOrDefault(f => f.Text == text)?.ReadingIndex ?? 255);
 
                 // not found, try stripped form if stripped
                 if (isStripped && readingIndex == 255)
                 {
-                    readingIndex = (byte)normalizedReadings.IndexOf(textStripped);
+                    readingIndex = (byte)(bestMatch.Forms.FirstOrDefault(f => f.Text == textStripped)?.ReadingIndex ?? 255);
                 }
 
                 // not found, try with hiragana form
                 if (readingIndex == 255)
                 {
-                    var normalizedHiraganaReadings =
-                        bestMatch.Readings.Select(r => WanaKana.ToHiragana(r, new DefaultOptions() { ConvertLongVowelMark = false }))
-                                 .ToList();
-                    readingIndex = (byte)normalizedHiraganaReadings.IndexOf(textInHiragana);
+                    readingIndex = (byte)(bestMatch.Forms.FirstOrDefault(f =>
+                        WanaKana.ToHiragana(f.Text, new DefaultOptions() { ConvertLongVowelMark = false }) == textInHiragana)?.ReadingIndex ?? 255);
                 }
 
                 // not found, try with converting the long vowel mark
                 if (readingIndex == 255)
                 {
-                    normalizedReadings =
-                        bestMatch.Readings.Select(r => WanaKana.ToHiragana(r)).ToList();
-                    readingIndex = (byte)normalizedReadings.IndexOf(textInHiragana);
+                    readingIndex = (byte)(bestMatch.Forms.FirstOrDefault(f =>
+                        WanaKana.ToHiragana(f.Text) == textInHiragana)?.ReadingIndex ?? 255);
                 }
 
                 // Still not found, skip the word completely
@@ -1249,7 +1244,7 @@ namespace Jiten.Parser
                 {
                     foreach (var match in matches)
                     {
-                        if (match.word.Readings.Any(r => r == wordData.wordInfo.NormalizedForm))
+                        if (match.word.Forms.Any(f => f.Text == wordData.wordInfo.NormalizedForm))
                         {
                             bestMatch = match;
                             break;
@@ -1263,16 +1258,16 @@ namespace Jiten.Parser
             // Reading selection
             // Distinguishes betsween katakana readings, tries to filter out long vowel, etc
 
-            var readings = bestMatch.word.Readings.ToList();
+            var forms = bestMatch.word.Forms.OrderBy(f => f.ReadingIndex).ToList();
             var targetHiragana = bestMatch.form.Text;
             var originalText = wordData.wordInfo.Text;
 
             byte bestReadingIndex = 255;
             int maxScriptScore = 0;
 
-            for (int i = 0; i < readings.Count; i++)
+            for (int i = 0; i < forms.Count; i++)
             {
-                string reading = readings[i];
+                string reading = forms[i].Text;
 
                 // A. Filter: The reading MUST correspond to the deconjugated word phonetically.
                 // We verify this by converting the reading to Hiragana and checking if it matches our target.
@@ -1292,7 +1287,7 @@ namespace Jiten.Parser
                 if (score > maxScriptScore)
                 {
                     maxScriptScore = score;
-                    bestReadingIndex = (byte)i;
+                    bestReadingIndex = (byte)forms[i].ReadingIndex;
                 }
             }
 
@@ -1300,17 +1295,15 @@ namespace Jiten.Parser
             if (bestReadingIndex == 255)
             {
                 // Try strict Hiragana match
-                var normalizedReadings = readings.Select(r => WanaKana.ToHiragana(r, new DefaultOptions() { ConvertLongVowelMark = false }))
-                                                 .ToList();
-                var idx = normalizedReadings.IndexOf(targetHiragana);
+                var strictMatch = forms.FirstOrDefault(f =>
+                    WanaKana.ToHiragana(f.Text, new DefaultOptions() { ConvertLongVowelMark = false }) == targetHiragana);
 
-                if (idx != -1) bestReadingIndex = (byte)idx;
+                if (strictMatch != null) bestReadingIndex = (byte)strictMatch.ReadingIndex;
                 else
                 {
                     // Try loose match (long vowels)
-                    normalizedReadings = readings.Select(r => WanaKana.ToHiragana(r)).ToList();
-                    idx = normalizedReadings.IndexOf(targetHiragana);
-                    if (idx != -1) bestReadingIndex = (byte)idx;
+                    var looseMatch = forms.FirstOrDefault(f => WanaKana.ToHiragana(f.Text) == targetHiragana);
+                    if (looseMatch != null) bestReadingIndex = (byte)looseMatch.ReadingIndex;
                 }
             }
 
@@ -1381,9 +1374,9 @@ namespace Jiten.Parser
                 foreach (var id in matchesIds)
                 {
                     if (!wordCache.TryGetValue(id, out var match)) continue;
-                    var readingIndex = match.Readings?.IndexOf(word) ?? -1;
-                    if (readingIndex >= 0)
-                        matchesWithReading.Add((match, readingIndex));
+                    var matchedForm = match.Forms.FirstOrDefault(f => f.Text == word);
+                    if (matchedForm != null)
+                        matchesWithReading.Add((match, matchedForm.ReadingIndex));
                 }
 
                 if (matchesWithReading.Count == 0)
@@ -1392,19 +1385,19 @@ namespace Jiten.Parser
                 // Fetch frequency data from database
                 var candidateWordIds = matchesWithReading.Select(m => m.match.WordId).ToList();
                 await using var context = await _contextFactory.CreateDbContextAsync();
-                var frequencies = await context.JmDictWordFrequencies
+                var formFrequencies = await context.WordFormFrequencies
                     .AsNoTracking()
-                    .Where(f => candidateWordIds.Contains(f.WordId))
-                    .ToDictionaryAsync(f => f.WordId);
+                    .Where(wff => candidateWordIds.Contains(wff.WordId))
+                    .ToDictionaryAsync(wff => (wff.WordId, wff.ReadingIndex));
 
                 // Order by frequency rank (lower = more frequent = better)
                 var best = matchesWithReading
                     .OrderBy(m =>
                     {
-                        if (frequencies.TryGetValue(m.match.WordId, out var freq) &&
-                            freq.ReadingsFrequencyRank.Count > m.readingIndex)
-                            return freq.ReadingsFrequencyRank[m.readingIndex];
-                        return int.MaxValue; // No frequency data = lowest priority
+                        var key = (m.match.WordId, (short)m.readingIndex);
+                        if (formFrequencies.TryGetValue(key, out var wff))
+                            return wff.FrequencyRank;
+                        return int.MaxValue;
                     })
                     .First();
 
@@ -1681,8 +1674,8 @@ namespace Jiten.Parser
 
         private static byte GetBestReadingIndex(JmDictWord word, string originalText)
         {
-            var readings = word.Readings;
-            if (readings.Count == 0)
+            var forms = word.Forms.OrderBy(f => f.ReadingIndex).ToList();
+            if (forms.Count == 0)
                 return 0;
 
             var textHiragana = WanaKana.ToHiragana(originalText, new DefaultOptions { ConvertLongVowelMark = false });
@@ -1691,9 +1684,9 @@ namespace Jiten.Parser
             byte bestIndex = 0;
             int maxScore = -1;
 
-            for (int i = 0; i < readings.Count; i++)
+            for (int i = 0; i < forms.Count; i++)
             {
-                var reading = readings[i];
+                var reading = forms[i].Text;
                 var readingHiragana = WanaKana.ToHiragana(reading, new DefaultOptions { ConvertLongVowelMark = false });
 
                 // Check phonetic match
@@ -1708,22 +1701,20 @@ namespace Jiten.Parser
                 if (score > maxScore)
                 {
                     maxScore = score;
-                    bestIndex = (byte)i;
+                    bestIndex = (byte)forms[i].ReadingIndex;
                 }
             }
 
-            // Fallback if no phonetic match: find any reading matching hiragana
+            // Fallback if no phonetic match: find any form matching hiragana
             if (maxScore == -1)
             {
-                var normalizedReadings = readings.Select(r => WanaKana.ToHiragana(r, new DefaultOptions { ConvertLongVowelMark = false }))
-                                                 .ToList();
-                var idx = normalizedReadings.IndexOf(textHiragana);
-                if (idx != -1) return (byte)idx;
+                var strictMatch = forms.FirstOrDefault(f =>
+                    WanaKana.ToHiragana(f.Text, new DefaultOptions { ConvertLongVowelMark = false }) == textHiragana);
+                if (strictMatch != null) return (byte)strictMatch.ReadingIndex;
 
                 // Try with long vowel conversion
-                normalizedReadings = readings.Select(r => WanaKana.ToHiragana(r)).ToList();
-                idx = normalizedReadings.IndexOf(textHiragana);
-                if (idx != -1) return (byte)idx;
+                var looseMatch = forms.FirstOrDefault(f => WanaKana.ToHiragana(f.Text) == textHiragana);
+                if (looseMatch != null) return (byte)looseMatch.ReadingIndex;
             }
 
             // No match found - return 255 to indicate failure

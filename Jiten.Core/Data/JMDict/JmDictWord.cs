@@ -3,16 +3,14 @@ namespace Jiten.Core.Data.JMDict;
 public class JmDictWord
 {
     public int WordId { get; set; }
-    public List<string> Readings { get; set; } = new();
-    public List<string> ReadingsFurigana { get; set; } = new();
-    public List<JmDictReadingType> ReadingTypes { get; set; } = new();
-    public List<string>? ObsoleteReadings { get; set; } = new();
+
     public List<string> PartsOfSpeech { get; set; } = new();
     public List<JmDictDefinition> Definitions { get; set; } = new();
     public List<JmDictLookup> Lookups { get; set; } = new();
     public List<int>? PitchAccents { get; set; } = new();
     public List<string>? Priorities { get; set; } = [];
     public WordOrigin Origin { get; set; } = WordOrigin.Unknown;
+    public List<JmDictWordForm> Forms { get; set; } = [];
 
     public int GetPriorityScore(bool isKana)
     {
@@ -22,10 +20,10 @@ public class JmDictWord
         int score = 0;
 
         // Special priority for common words that get the wrong reading by default
-        // i.e. 秋, 陽, etc 
+        // i.e. 秋, 陽, etc
         if (Priorities.Contains("jiten"))
             score += 100;
-        
+
         if (Priorities.Contains("ichi1"))
             score += 20;
 
