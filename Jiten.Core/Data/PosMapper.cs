@@ -170,8 +170,7 @@ public static class PosMapper
     /// </summary>
     public static PartOfSpeech FromJmDict(string jmDictTag)
     {
-        // Handle verb tags (v1, v5g, vs, vk, etc.)
-        if (jmDictTag.StartsWith('v'))
+        if (jmDictTag.StartsWith('v') && jmDictTag is not "vulg" and not "vet" and not "vidg")
             return PartOfSpeech.Verb;
 
         // JMnedict sometimes uses name-* tags (e.g., name-person/name-place) depending on import/source.

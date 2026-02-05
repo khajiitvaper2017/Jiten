@@ -328,6 +328,24 @@ public static class JmDictHelper
         return lookupTable;
     }
 
+    public static async Task<HashSet<int>> LoadNameOnlyWordIds(JitenDbContext context)
+    {
+        var result = new HashSet<int>();
+
+        await foreach (var word in context.JMDictWords.AsNoTracking()
+                           .Select(w => new { w.WordId, w.PartsOfSpeech })
+                           .AsAsyncEnumerable())
+        {
+            if (word.PartsOfSpeech.Count > 0 &&
+                word.PartsOfSpeech.All(p => PosMapper.FromJmDict(p) == PartOfSpeech.Name))
+            {
+                result.Add(word.WordId);
+            }
+        }
+
+        return result;
+    }
+
     public static List<string> ToHumanReadablePartsOfSpeech(this List<string> pos)
     {
         List<string> humanReadablePos = new();
@@ -736,7 +754,7 @@ public static class JmDictHelper
     {
         Console.WriteLine("Starting JMNedict sync...");
 
-        await LoadEntities(dtdPath);
+        await LoadEntities(dtdPath, jmneDictPath);
 
         var readerSettings = new XmlReaderSettings() { Async = true, DtdProcessing = DtdProcessing.Parse, MaxCharactersFromEntities = 0 };
         XmlReader reader = XmlReader.Create(jmneDictPath, readerSettings);
@@ -1336,7 +1354,7 @@ public static class JmDictHelper
                def1.SlovenianMeanings.SequenceEqual(def2.SlovenianMeanings);
     }
 
-    private static async Task LoadEntities(string dtdPath)
+    private static async Task LoadEntities(string dtdPath, string? dictionaryXmlPath = null)
     {
         _entities.Clear();
         _entitiesReverse.Clear();
@@ -1370,11 +1388,27 @@ public static class JmDictHelper
                 _entitiesReverse.TryAdd(matches.Groups[2].Value, matches.Groups[1].Value);
             }
         }
+
+        if (dictionaryXmlPath == null) return;
+
+        using var reader = new StreamReader(dictionaryXmlPath);
+        while (await reader.ReadLineAsync() is { } line)
+        {
+            if (line.StartsWith('<') && !line.StartsWith("<!", StringComparison.Ordinal) && !line.StartsWith("<?", StringComparison.Ordinal))
+                break;
+
+            var matches = reg.Match(line);
+            if (matches.Length > 0)
+            {
+                _entities.TryAdd(matches.Groups[1].Value, matches.Groups[2].Value);
+                _entitiesReverse.TryAdd(matches.Groups[2].Value, matches.Groups[1].Value);
+            }
+        }
     }
 
     private static async Task<List<JmDictWord>> GetWordInfos(string dtdPath, string dictionaryPath)
     {
-        await LoadEntities(dtdPath);
+        await LoadEntities(dtdPath, dictionaryPath);
 
         var readerSettings = new XmlReaderSettings() { Async = true, DtdProcessing = DtdProcessing.Parse, MaxCharactersFromEntities = 0 };
         XmlReader reader = XmlReader.Create(dictionaryPath, readerSettings);
@@ -1851,6 +1885,20 @@ public static class JmDictHelper
 
             var existingWordDict = existingWords.ToDictionary(w => w.WordId);
 
+            // Delete orphaned lookups for words that are new (not in DB) to avoid PK conflicts
+            var newWordIds = batchIds.Where(id => !existingWordDict.ContainsKey(id)).ToList();
+            if (newWordIds.Count > 0)
+            {
+                var orphanedLookups = await context.Set<JmDictLookup>()
+                    .Where(l => newWordIds.Contains(l.WordId))
+                    .ToListAsync();
+                if (orphanedLookups.Count > 0)
+                {
+                    context.Set<JmDictLookup>().RemoveRange(orphanedLookups);
+                    Console.WriteLine($"  Removed {orphanedLookups.Count} orphaned lookups for {newWordIds.Count} new words.");
+                }
+            }
+
             foreach (var xmlWordId in batchIds)
             {
                 if (!syncEntriesById.TryGetValue(xmlWordId, out var entry))
@@ -2137,17 +2185,6 @@ public static class JmDictHelper
                 dbWord.Forms.Add(newForm);
                 formMap[key] = newForm;
                 formsCreated++;
-
-                // Generate lookups for new form
-                var existingLookupKeys = new HashSet<string>(dbWord.Lookups.Select(l => l.LookupKey));
-                foreach (var lookup in GenerateLookupsForForm(entry.WordId, syncForm.Text))
-                {
-                    if (existingLookupKeys.Add(lookup.LookupKey))
-                    {
-                        dbWord.Lookups.Add(lookup);
-                        lookupsCreated++;
-                    }
-                }
             }
         }
 
@@ -2159,6 +2196,23 @@ public static class JmDictHelper
             {
                 form.IsActiveInLatestSource = false;
                 formsDeactivated++;
+            }
+        }
+
+        // Sync lookups (delete-and-recreate from all current forms)
+        context.Set<JmDictLookup>().RemoveRange(dbWord.Lookups);
+        dbWord.Lookups.Clear();
+
+        var lookupKeys = new HashSet<string>();
+        foreach (var syncForm in allSyncForms)
+        {
+            foreach (var lookup in GenerateLookupsForForm(entry.WordId, syncForm.Text))
+            {
+                if (lookupKeys.Add(lookup.LookupKey))
+                {
+                    dbWord.Lookups.Add(lookup);
+                    lookupsCreated++;
+                }
             }
         }
 
@@ -2439,7 +2493,7 @@ public static class JmDictHelper
 
     private static async Task<List<SyncEntry>> ParseSyncEntries(string dtdPath, string dictionaryPath)
     {
-        await LoadEntities(dtdPath);
+        await LoadEntities(dtdPath, dictionaryPath);
 
         var readerSettings = new XmlReaderSettings { Async = true, DtdProcessing = DtdProcessing.Parse, MaxCharactersFromEntities = 0 };
         XmlReader reader = XmlReader.Create(dictionaryPath, readerSettings);
