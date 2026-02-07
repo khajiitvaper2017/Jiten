@@ -1,4 +1,5 @@
 ﻿using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Xml;
@@ -1819,8 +1820,12 @@ public static class JmDictHelper
     }
 
     public static async Task SyncJmDict(IDbContextFactory<JitenDbContext> contextFactory,
-                                        string dtdPath, string dictionaryPath, string furiganaPath)
+                                        string dtdPath, string dictionaryPath, string furiganaPath,
+                                        bool dryRun = false, string? reportPath = null)
     {
+        if (dryRun)
+            Console.WriteLine("=== DRY RUN MODE — no changes will be saved ===");
+
         Console.WriteLine("Parsing JMDict XML...");
         var syncEntries = await ParseSyncEntries(dtdPath, dictionaryPath);
         Console.WriteLine($"Parsed {syncEntries.Count} entries from XML.");
@@ -1848,11 +1853,18 @@ public static class JmDictHelper
         int definitionsDeleted = 0, definitionsCreated = 0;
         int lookupsCreated = 0;
         int unresolvedRestrictions = 0;
+        int wordsWithDefChanges = 0;
+
+        // Dry-run change tracking
+        var newWordEntries = dryRun ? new List<string>() : null;
+        var updatedWordEntries = dryRun ? new List<string>() : null;
+        var deactivatedWordEntries = dryRun ? new List<string>() : null;
 
         // Pre-mark custom senses with high SenseIndex so they survive delete-recreate
-        Console.WriteLine("Pre-marking custom senses...");
-        await using (var preContext = await contextFactory.CreateDbContextAsync())
+        if (!dryRun)
         {
+            Console.WriteLine("Pre-marking custom senses...");
+            await using var preContext = await contextFactory.CreateDbContextAsync();
             var customDef = await preContext.Definitions
                 .FirstOrDefaultAsync(d => d.WordId == 2029110 &&
                     d.EnglishMeanings.Contains("indicates na-adjective") &&
@@ -1886,16 +1898,19 @@ public static class JmDictHelper
             var existingWordDict = existingWords.ToDictionary(w => w.WordId);
 
             // Delete orphaned lookups for words that are new (not in DB) to avoid PK conflicts
-            var newWordIds = batchIds.Where(id => !existingWordDict.ContainsKey(id)).ToList();
-            if (newWordIds.Count > 0)
+            if (!dryRun)
             {
-                var orphanedLookups = await context.Set<JmDictLookup>()
-                    .Where(l => newWordIds.Contains(l.WordId))
-                    .ToListAsync();
-                if (orphanedLookups.Count > 0)
+                var newWordIds = batchIds.Where(id => !existingWordDict.ContainsKey(id)).ToList();
+                if (newWordIds.Count > 0)
                 {
-                    context.Set<JmDictLookup>().RemoveRange(orphanedLookups);
-                    Console.WriteLine($"  Removed {orphanedLookups.Count} orphaned lookups for {newWordIds.Count} new words.");
+                    var orphanedLookups = await context.Set<JmDictLookup>()
+                        .Where(l => newWordIds.Contains(l.WordId))
+                        .ToListAsync();
+                    if (orphanedLookups.Count > 0)
+                    {
+                        context.Set<JmDictLookup>().RemoveRange(orphanedLookups);
+                        Console.WriteLine($"  Removed {orphanedLookups.Count} orphaned lookups for {newWordIds.Count} new words.");
+                    }
                 }
             }
 
@@ -1908,6 +1923,21 @@ public static class JmDictHelper
                 {
                     if (existingWordDict.TryGetValue(xmlWordId, out var dbWord))
                     {
+                        // Snapshot state for dry-run comparison
+                        HashSet<string>? oldDefFingerprints = null;
+                        HashSet<(JmDictFormType, string)>? oldActiveForms = null;
+                        if (dryRun)
+                        {
+                            oldDefFingerprints = dbWord.Definitions
+                                .Where(d => d.SenseIndex < 1000)
+                                .Select(d => $"{d.SenseIndex}|{string.Join(";", d.EnglishMeanings)}|{string.Join(",", d.Pos)}")
+                                .ToHashSet();
+                            oldActiveForms = dbWord.Forms
+                                .Where(f => f.IsActiveInLatestSource)
+                                .Select(f => (f.FormType, f.Text))
+                                .ToHashSet();
+                        }
+
                         // UPDATE existing word
                         var result = SyncExistingWord(context, dbWord, entry, furiganaDict);
                         formsMatched += result.FormsMatched;
@@ -1918,16 +1948,77 @@ public static class JmDictHelper
                         lookupsCreated += result.LookupsCreated;
                         unresolvedRestrictions += result.UnresolvedRestrictions;
                         wordsUpdated++;
+
+                        if (dryRun)
+                        {
+                            var changes = new List<string>();
+
+                            // Detect added forms
+                            var addedForms = dbWord.Forms
+                                .Where(f => !oldActiveForms!.Contains((f.FormType, f.Text)) && f.IsActiveInLatestSource)
+                                .Select(f => f.Text)
+                                .ToList();
+                            if (addedForms.Count > 0)
+                                changes.Add($"  + Forms added: {string.Join(", ", addedForms)}");
+
+                            // Detect deactivated forms
+                            var removedForms = dbWord.Forms
+                                .Where(f => !f.IsActiveInLatestSource && oldActiveForms!.Contains((f.FormType, f.Text)))
+                                .Select(f => f.Text)
+                                .ToList();
+                            if (removedForms.Count > 0)
+                                changes.Add($"  - Forms deactivated: {string.Join(", ", removedForms)}");
+
+                            // Detect definition changes
+                            var newDefFingerprints = dbWord.Definitions
+                                .Where(d => d.SenseIndex < 1000)
+                                .Select(d => $"{d.SenseIndex}|{string.Join(";", d.EnglishMeanings)}|{string.Join(",", d.Pos)}")
+                                .ToHashSet();
+                            if (!oldDefFingerprints!.SetEquals(newDefFingerprints))
+                            {
+                                changes.Add($"  ~ Definitions changed ({oldDefFingerprints.Count} -> {newDefFingerprints.Count} senses)");
+                                wordsWithDefChanges++;
+                            }
+
+                            if (changes.Count > 0)
+                            {
+                                var displayText = entry.KanjiForms.FirstOrDefault()?.Text
+                                                  ?? entry.KanaForms.FirstOrDefault()?.Text ?? "?";
+                                var sb = new StringBuilder();
+                                sb.AppendLine($"WordId {entry.WordId} -- {displayText}");
+                                foreach (var c in changes)
+                                    sb.AppendLine(c);
+                                updatedWordEntries!.Add(sb.ToString());
+                            }
+                        }
                     }
                     else
                     {
                         // CREATE new word
                         var newWord = CreateNewWord(entry, furiganaDict);
-                        context.JMDictWords.Add(newWord);
+                        if (!dryRun)
+                            context.JMDictWords.Add(newWord);
                         formsCreated += newWord.Forms.Count;
                         definitionsCreated += newWord.Definitions.Count;
                         lookupsCreated += newWord.Lookups.Count;
                         wordsCreated++;
+
+                        if (dryRun)
+                        {
+                            var displayText = entry.KanjiForms.FirstOrDefault()?.Text
+                                              ?? entry.KanaForms.FirstOrDefault()?.Text ?? "?";
+                            var allForms = entry.KanjiForms.Concat(entry.KanaForms).Select(f => f.Text).ToList();
+                            var sb = new StringBuilder();
+                            sb.AppendLine($"WordId {entry.WordId} -- {displayText}");
+                            sb.AppendLine($"  Forms: {string.Join(", ", allForms)}");
+                            foreach (var sense in entry.Senses)
+                            {
+                                var pos = sense.Pos.Count > 0 ? $"({string.Join(", ", sense.Pos)}) " : "";
+                                var meanings = string.Join("; ", sense.EnglishMeanings);
+                                sb.AppendLine($"  {sense.SenseIndex + 1}. {pos}{meanings}");
+                            }
+                            newWordEntries!.Add(sb.ToString());
+                        }
                     }
                 }
                 catch (Exception ex)
@@ -1937,14 +2028,15 @@ public static class JmDictHelper
                 }
             }
 
-            await context.SaveChangesAsync();
+            if (!dryRun)
+                await context.SaveChangesAsync();
             context.ChangeTracker.Clear();
 
             var processed = Math.Min(batchStart + batchSize, allXmlWordIds.Count);
             Console.WriteLine($"  Processed {processed}/{allXmlWordIds.Count} entries...");
         }
 
-        // Soft-delete pass: mark forms/definitions as inactive for words not in XML
+        // Soft-delete pass: find words in DB but not in XML
         Console.WriteLine("Running soft-delete pass for removed entries...");
         await using (var deactivateContext = await contextFactory.CreateDbContextAsync())
         {
@@ -1957,24 +2049,40 @@ public static class JmDictHelper
 
             foreach (var word in wordsToDeactivate)
             {
-                foreach (var form in word.Forms)
-                    form.IsActiveInLatestSource = false;
-                foreach (var def in word.Definitions.Where(d => d.SenseIndex < 1000))
-                    def.IsActiveInLatestSource = false;
+                if (!dryRun)
+                {
+                    foreach (var form in word.Forms)
+                        form.IsActiveInLatestSource = false;
+                    foreach (var def in word.Definitions.Where(d => d.SenseIndex < 1000))
+                        def.IsActiveInLatestSource = false;
+                }
                 formsDeactivated += word.Forms.Count;
+
+                if (dryRun)
+                {
+                    var displayText = word.Forms.FirstOrDefault()?.Text ?? $"WordId {word.WordId}";
+                    var formTexts = word.Forms.Select(f => f.Text).ToList();
+                    var sb = new StringBuilder();
+                    sb.AppendLine($"WordId {word.WordId} -- {displayText}");
+                    sb.AppendLine($"  Forms: {string.Join(", ", formTexts)}");
+                    deactivatedWordEntries!.Add(sb.ToString());
+                }
             }
 
             if (wordsToDeactivate.Count > 0)
             {
-                await deactivateContext.SaveChangesAsync();
-                Console.WriteLine($"  Deactivated {wordsToDeactivate.Count} words not found in XML.");
+                if (!dryRun)
+                    await deactivateContext.SaveChangesAsync();
+                Console.WriteLine($"  {(dryRun ? "Would deactivate" : "Deactivated")} {wordsToDeactivate.Count} words not found in XML.");
             }
         }
 
-        // Re-apply custom data
-        Console.WriteLine("Re-applying custom priorities and POS...");
-        await using (var postContext = await contextFactory.CreateDbContextAsync())
+        if (!dryRun)
         {
+            // Re-apply custom data
+            Console.WriteLine("Re-applying custom priorities and POS...");
+            await using var postContext = await contextFactory.CreateDbContextAsync();
+
             int[] jitenPriorityIds =
             [
                 1332650, 2848543, 1160790, 1203260, 1397260, 1499720, 1315130, 1550190,
@@ -2052,17 +2160,81 @@ public static class JmDictHelper
 
         // Print statistics
         Console.WriteLine();
-        Console.WriteLine("=== JMDict Sync Complete ===");
-        Console.WriteLine($"Words: {wordsUpdated} updated, {wordsCreated} created, {wordsFailed} failed");
-        Console.WriteLine($"Forms: {formsMatched} matched, {formsCreated} created, {formsDeactivated} deactivated");
-        Console.WriteLine($"Definitions: {definitionsDeleted} deleted, {definitionsCreated} created");
-        Console.WriteLine($"Lookups: {lookupsCreated} created");
-        if (unresolvedRestrictions > 0)
-            Console.WriteLine($"Warnings: {unresolvedRestrictions} unresolved stagk/stagr restrictions");
-
-        // Verification stats
-        await using (var verifyContext = await contextFactory.CreateDbContextAsync())
+        if (dryRun)
         {
+            Console.WriteLine("=== JMDict Sync Dry Run Complete ===");
+            Console.WriteLine($"Words: {wordsUpdated} existing, {wordsCreated} new, {wordsFailed} failed");
+            Console.WriteLine($"  Updated words with changes: {updatedWordEntries!.Count}");
+            Console.WriteLine($"  Words to deactivate: {deactivatedWordEntries!.Count}");
+            Console.WriteLine($"Forms: {formsMatched} matched, {formsCreated} to add, {formsDeactivated} to deactivate");
+            Console.WriteLine($"Definitions: {wordsWithDefChanges} words with definition changes");
+
+            // Write report
+            reportPath ??= "jmdict-sync-changes.txt";
+            var report = new StringBuilder();
+            report.AppendLine("JMDict Sync -- Dry Run Report");
+            report.AppendLine($"Generated: {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC");
+            report.AppendLine($"Source: {syncEntries.Count} entries parsed from XML");
+            report.AppendLine();
+            report.AppendLine("=== Summary ===");
+            report.AppendLine($"New words:              {wordsCreated}");
+            report.AppendLine($"Updated words:          {updatedWordEntries.Count}");
+            report.AppendLine($"Deactivated words:      {deactivatedWordEntries.Count}");
+            report.AppendLine($"Unchanged words:        {wordsUpdated - updatedWordEntries.Count}");
+            report.AppendLine($"Forms to add:           {formsCreated}");
+            report.AppendLine($"Forms to deactivate:    {formsDeactivated}");
+            report.AppendLine($"Definition changes:     {wordsWithDefChanges} words affected");
+            report.AppendLine();
+
+            if (newWordEntries!.Count > 0)
+            {
+                report.AppendLine($"=== New Words ({newWordEntries.Count}) ===");
+                report.AppendLine();
+                for (int i = 0; i < newWordEntries.Count; i++)
+                {
+                    report.Append($"[{i + 1}] {newWordEntries[i]}");
+                    report.AppendLine();
+                }
+            }
+
+            if (updatedWordEntries.Count > 0)
+            {
+                report.AppendLine($"=== Updated Words ({updatedWordEntries.Count}) ===");
+                report.AppendLine();
+                for (int i = 0; i < updatedWordEntries.Count; i++)
+                {
+                    report.Append($"[{i + 1}] {updatedWordEntries[i]}");
+                    report.AppendLine();
+                }
+            }
+
+            if (deactivatedWordEntries.Count > 0)
+            {
+                report.AppendLine($"=== Deactivated Words ({deactivatedWordEntries.Count}) ===");
+                report.AppendLine();
+                for (int i = 0; i < deactivatedWordEntries.Count; i++)
+                {
+                    report.Append($"[{i + 1}] {deactivatedWordEntries[i]}");
+                    report.AppendLine();
+                }
+            }
+
+            await File.WriteAllTextAsync(reportPath, report.ToString());
+            Console.WriteLine($"\nReport written to: {reportPath}");
+        }
+        else
+        {
+            Console.WriteLine("=== JMDict Sync Complete ===");
+            Console.WriteLine($"Words: {wordsUpdated} updated, {wordsCreated} created, {wordsFailed} failed");
+            Console.WriteLine($"Forms: {formsMatched} matched, {formsCreated} created, {formsDeactivated} deactivated");
+            Console.WriteLine($"Definitions: {definitionsDeleted} deleted, {definitionsCreated} created");
+            Console.WriteLine($"Lookups: {lookupsCreated} created");
+            if (unresolvedRestrictions > 0)
+                Console.WriteLine($"Warnings: {unresolvedRestrictions} unresolved stagk/stagr restrictions");
+
+            // Verification stats
+            await using var verifyContext = await contextFactory.CreateDbContextAsync();
+
             var formStats = await verifyContext.WordForms.AsNoTracking()
                 .GroupBy(_ => 1)
                 .Select(g => new

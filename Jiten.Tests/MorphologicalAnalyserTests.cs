@@ -600,6 +600,7 @@ public class MorphologicalAnalyserTests
         yield return ["ぶっち切れてる", new[] { "ぶち切れてる" }];  // ぶっち切れる → ぶち切れる (to become enraged)
         // 少女の手 misparse fix - Sudachi was parsing as 少 (prefix) + 女の手 (expression)
         yield return ["少女の手によって", new[] { "少女", "の", "手", "によって" }];
+        yield return ["各党幹部による応援演説", new[] { "各", "党幹部", "による", "応援演説" }];
         // 手を抜く compound expression - Sudachi classifies 手 as suffix, but should match exp entry
         yield return ["手を抜いているんですか", new[] { "手を抜いている", "んです", "か" }];
         yield return ["水魔法", new[] { "水", "魔法" }];
@@ -632,6 +633,8 @@ public class MorphologicalAnalyserTests
         yield return ["この辺りで物々交換しておかないとな", new[] { "この","辺り","で","物々交換","しておかない","と","な" }];
         yield return ["その案件について", new[] { "その","案件","について" }];
         yield return ["喜んだだろうね", new[] { "喜んだ","だろう","ね" }];
+        // Comma (、) should not affect segmentation of preceding compound expressions
+        yield return ["そこまで、それは違う", new[] { "そこまで","それ","は","違う" }];
     }
 
     [Theory]

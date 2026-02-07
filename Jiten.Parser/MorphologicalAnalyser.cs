@@ -106,6 +106,7 @@ public class MorphologicalAnalyser
         ("で", "も", PartOfSpeech.Conjunction),
         ("多", "き", PartOfSpeech.IAdjective),
         ("ぶっ", "た", PartOfSpeech.Suffix),
+        ("に", "よる", PartOfSpeech.Expression),
     ];
     
     private readonly HashSet<char> _sentenceEnders = ['。', '！', '？', '」'];
@@ -296,6 +297,7 @@ public class MorphologicalAnalyser
             wordInfos = TrackStage(diagnostics, "CombineFinal", wordInfos, CombineFinal);
             wordInfos = TrackStage(diagnostics, "RepairTankaToTaNKa", wordInfos, RepairTankaToTaNKa);
             wordInfos = TrackStage(diagnostics, "FilterMisparse", wordInfos, FilterMisparse);
+            wordInfos = TrackStage(diagnostics, "FixReadingAmbiguity", wordInfos, FixReadingAmbiguity);
 
             results.Add(SplitIntoSentences(originalTexts[i], wordInfos));
         }
@@ -341,6 +343,12 @@ public class MorphologicalAnalyser
             if (word is { Text: "山", PartOfSpeech: PartOfSpeech.Suffix })
                 word.PartOfSpeech = PartOfSpeech.Noun;
 
+            if (word is { Text: "だろう" or "だろ", PartOfSpeech: PartOfSpeech.Auxiliary })
+            {
+                word.PartOfSpeech = PartOfSpeech.Expression;
+                word.DictionaryForm = word.Text;
+            }
+
             if (word.Text == "だあ")
             {
                 word.Text = "だ";
@@ -371,6 +379,55 @@ public class MorphologicalAnalyser
                 wordInfos.RemoveAt(i);
                 continue;
             }
+        }
+
+        return wordInfos;
+    }
+
+    /// <summary>
+    /// Fixes Sudachi reading disambiguations for kanji homographs using contextual cues.
+    /// E.g. 表 before へ/に (directional) when not preceded by a noun → おもて not ひょう.
+    /// </summary>
+    private List<WordInfo> FixReadingAmbiguity(List<WordInfo> wordInfos)
+    {
+        for (int i = 0; i < wordInfos.Count; i++)
+        {
+            var word = wordInfos[i];
+
+            // 表 (ヒョウ) → オモテ when followed by directional particle and not preceded by a noun
+            // e.g. 表へ出る (go outside) vs メニュー表 (menu chart)
+            if (word.Text == "表" && word.Reading == "ヒョウ" &&
+                i + 1 < wordInfos.Count && wordInfos[i + 1].Text is "へ" or "に" &&
+                (i == 0 || wordInfos[i - 1].PartOfSpeech != PartOfSpeech.Noun))
+            {
+                word.Reading = "オモテ";
+            }
+
+            // 何 (ナン) → ナニ before を/が/も or at end of sentence
+            if (word is { Text: "何", Reading: "ナン" })
+            {
+                var next = i + 1 < wordInfos.Count ? wordInfos[i + 1] : null;
+                if (next == null || next.Text is "を" or "が" or "も")
+                    word.Reading = "ナニ";
+            }
+
+            // 一日/１日 → イチニチ unless preceded by a month (X月一日 = date → keep ツイタチ)
+            if (word.Reading == "ツイタチ" && word.Text is "一日" or "１日" or "1日")
+            {
+                var prev = i > 0 ? wordInfos[i - 1] : null;
+                if (prev == null || !prev.Text.EndsWith('月'))
+                    word.Reading = "イチニチ";
+            }
+
+            // 寒気 (カンキ cold air) → サムケ (chills) when followed by が + する
+            // e.g. 寒気がする/寒気がした (to have chills) vs 寒気が南下する (cold air moves south)
+            if (word is { Text: "寒気", Reading: "カンキ" } &&
+                i + 2 < wordInfos.Count && wordInfos[i + 1].Text == "が" &&
+                wordInfos[i + 2].DictionaryForm == "する")
+            {
+                word.Reading = "サムケ";
+            }
+
         }
 
         return wordInfos;
@@ -1144,6 +1201,7 @@ public class MorphologicalAnalyser
         text = Regex.Replace(text, "。", " 。\n");
         text = Regex.Replace(text, "！", " ！\n");
         text = Regex.Replace(text, "？", " ？\n");
+        text = text.Replace("、", "\n");
 
         // Normalise multiple long-vowel marks to a single one (preserves elongation but not emphasis degree)
         text = Regex.Replace(text, "ー{2,}", "ー");
@@ -2381,14 +2439,14 @@ public class MorphologicalAnalyser
             if (string.IsNullOrWhiteSpace(line) || line == "EOS") continue;
 
             var parts = line.Split('\t');
-            if (parts.Length < 6) continue;
+            if (parts.Length < 5) continue;
 
             var posDetail = parts[1].Split(',');
             tokens.Add(new SudachiToken
                        {
                            Surface = parts[0], PartOfSpeech = posDetail.Length > 0 ? posDetail[0] : "",
                            PosDetail = posDetail.Skip(1).ToArray(), NormalizedForm = parts.Length > 2 ? parts[2] : "",
-                           DictionaryForm = parts.Length > 3 ? parts[3] : "", Reading = parts.Length > 5 ? parts[5] : ""
+                           DictionaryForm = parts.Length > 3 ? parts[3] : "", Reading = parts.Length > 4 ? parts[4] : ""
                        });
         }
 
