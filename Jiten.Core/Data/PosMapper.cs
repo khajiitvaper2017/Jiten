@@ -266,6 +266,16 @@ public static class PosMapper
             (convertedPosList.Contains(PartOfSpeech.NominalAdjective) || convertedPosList.Contains(PartOfSpeech.NaAdjective)))
             return true;
 
+        // Sudachi 感動詞 (Interjection) covers set phrases that JMDict tags as exp (Expression).
+        // E.g. 初めまして, おはようございます, さようなら.
+        if (sudachiPos == PartOfSpeech.Interjection && convertedPosList.Contains(PartOfSpeech.Expression))
+            return true;
+
+        // Sudachi 接尾辞 (Suffix) should match JMDict n-suf (NounSuffix).
+        // E.g. だらけ is n-suf in JMDict but 接尾辞 in Sudachi.
+        if (sudachiPos == PartOfSpeech.Suffix && convertedPosList.Contains(PartOfSpeech.NounSuffix))
+            return true;
+
         return false;
     }
 

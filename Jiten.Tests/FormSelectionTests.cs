@@ -101,6 +101,14 @@ public class FormSelectionTests
         // だろう after an adverb — Sudachi tags as 助動詞 (dict form だ), should resolve to
         // だろう expression (1928670), not だる aux-v (2867372)
         yield return ["どうだろう", "だろう", 1928670, (byte)0];
+
+        // 初めまして — Sudachi tags as 感動詞 (Interjection), should resolve to the expression
+        // 初めまして (1625780), not deconjugate to 初める aux-v (1342560)
+        yield return ["初めまして", "初めまして", 1625780, (byte)0];
+
+        // よくしています — should resolve to 良くする (2257610, uk), not 浴する (2255500)
+        // GetPriorityScore uk bonus disambiguates when compound lookup returns both
+        yield return ["私はある２つのことをよくしています", "よくしています", 2257610, (byte)3];
     }
 
     [Theory]

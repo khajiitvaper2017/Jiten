@@ -63,7 +63,6 @@ public class MorphologicalAnalyser
     private static HashSet<(string, string, PartOfSpeech?)> SpecialCases2 =
     [
         ("じゃ", "ない", PartOfSpeech.Expression),
-        ("に", "しろ", PartOfSpeech.Expression),
         ("だ", "けど", PartOfSpeech.Conjunction),
         ("だ", "が", PartOfSpeech.Conjunction),
         ("で", "さえ", PartOfSpeech.Expression),
@@ -107,6 +106,8 @@ public class MorphologicalAnalyser
         ("多", "き", PartOfSpeech.IAdjective),
         ("ぶっ", "た", PartOfSpeech.Suffix),
         ("に", "よる", PartOfSpeech.Expression),
+        ("とっく", "に", PartOfSpeech.Adverb),
+        ("おい", "で", PartOfSpeech.Expression),
     ];
     
     private readonly HashSet<char> _sentenceEnders = ['。', '！', '？', '」'];
@@ -1240,7 +1241,9 @@ public class MorphologicalAnalyser
         // Fix emphatic っ/ッ at clause boundaries causing Sudachi to misparse
         // e.g., 止まらないっ！ → Sudachi sees ないっ as な + いっ (行く te-form)
         // Insert stop token before っ/ッ when followed by punctuation, whitespace, or end of string
-        text = Regex.Replace(text, @"([っッ])(?=[！!？?。、,\s]|$)", $"{_stopToken}$1");
+        // Require hiragana before っ/ッ — emphatic っ follows verb/adj conjugations (always hiragana)
+        // This avoids breaking katakana interjections like フッ, チッ
+        text = Regex.Replace(text, @"(?<=.\p{IsHiragana})([っッ])(?=[！!？?。、,\s]|$)", $"{_stopToken}$1");
 
         // Fix Sudachi misparsing 水魔法 as 水魔 (water demon) + 法 (law)
         // Should be 水 (water) + 魔法 (magic)
@@ -1248,6 +1251,14 @@ public class MorphologicalAnalyser
 
         // Fix Sudachi misparsing 不適応 as 不適 + 応 instead of 不 (prefix) + 適応
         text = Regex.Replace(text, "不適応", $"不{_stopToken}適応");
+
+        // Fix Sudachi merging ホント with following short katakana nouns (e.g., ホントバカ → ホント + バカ)
+        text = Regex.Replace(text, "ホント(バカ|ダメ|マジ|クソ|アホ)", $"ホント{_stopToken}$1");
+
+        // Normalise colloquial ねえ → ない in fixed expressions that Sudachi doesn't recognise
+        // e.g., とんでもねえ → とんでもない, しょうがねえ → しょうがない
+        text = Regex.Replace(text, "とんでもねえ", "とんでもない");
+        text = Regex.Replace(text, "しょうがねえ", "しょうがない");
 
         // Replace line ending ellipsis with a sentence ender to be able to flatten later
         text = text.Replace("…\r", "。\r").Replace("…\n", "。\n");
@@ -1373,6 +1384,22 @@ public class MorphologicalAnalyser
                     newList.Add(daSuffix);
                     i += 3;
                     continue;
+                }
+
+                // に + しろ → にしろ (particle "even if") only when preceded by a verb/adjective/auxiliary
+                // e.g., 行くにしろ → 行く + にしろ (whether one goes...)
+                // Skip when preceded by a noun: 大概にしろ → 大概 + に + しろ (imperative of 大概にする)
+                if (w1.Text == "に" && w2.Text == "しろ")
+                {
+                    bool prevIsNoun = i > 0 && wordInfos[i - 1].PartOfSpeech is PartOfSpeech.Noun
+                        or PartOfSpeech.NaAdjective or PartOfSpeech.Pronoun;
+                    if (!prevIsNoun)
+                    {
+                        var newWord = new WordInfo(w1) { Text = "にしろ", DictionaryForm = "にしろ", PartOfSpeech = PartOfSpeech.Expression };
+                        newList.Add(newWord);
+                        i += 2;
+                        continue;
+                    }
                 }
 
                 bool found = false;
@@ -1614,6 +1641,11 @@ public class MorphologicalAnalyser
                                    nextWord.HasPartOfSpeechSection(PartOfSpeechSection.ConjunctionParticle) ||
                                    nextWord.HasPartOfSpeechSection(PartOfSpeechSection.Dependant) ||
                                    nextWord.HasPartOfSpeechSection(PartOfSpeechSection.PossibleDependant);
+
+                // Sudachi tags やれ as interjection, but after て-form it's the imperative of auxiliary やる
+                if (!isValidPart && nextWord.Text == "やれ" && nextWord.PartOfSpeech == PartOfSpeech.Interjection &&
+                    currentWord.Text.EndsWith("て"))
+                    isValidPart = true;
 
                 // Greedy steal: handle そうだ/そうか by taking just そう if it forms valid inflection
                 // e.g., 新しそうだ → 新しそう + だ, 話そうか → 話そう + か
