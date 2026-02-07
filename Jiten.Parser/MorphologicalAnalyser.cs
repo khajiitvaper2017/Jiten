@@ -11,6 +11,8 @@ namespace Jiten.Parser;
 
 public class MorphologicalAnalyser
 {
+    public Func<string, bool>? HasCompoundLookup { get; set; }
+
     private static HashSet<(string, string, string, PartOfSpeech?)> SpecialCases3 =
     [
         ("な", "の", "で", PartOfSpeech.Expression),
@@ -1555,11 +1557,11 @@ public class MorphologicalAnalyser
         var deconjCache = new Dictionary<string, HashSet<DeconjugationForm>>(StringComparer.Ordinal);
         HashSet<DeconjugationForm> CachedDeconjugate(string hiragana)
         {
-            if (!deconjCache.TryGetValue(hiragana, out var forms))
-            {
-                forms = deconjugator.Deconjugate(hiragana);
-                deconjCache[hiragana] = forms;
-            }
+            if (deconjCache.TryGetValue(hiragana, out var forms)) 
+                return forms;
+            
+            forms = deconjugator.Deconjugate(hiragana);
+            deconjCache[hiragana] = forms;
             return forms;
         }
 
@@ -1732,7 +1734,7 @@ public class MorphologicalAnalyser
                     var suffixDict = KanaNormalizer.Normalize(WanaKana.ToHiragana(nextWord.DictionaryForm));
                     var match = forms.FirstOrDefault(f => f.Text.EndsWith(suffixDict) && f.Text.Length > suffixDict.Length);
 
-                    if (match != null)
+                    if (match != null && (HasCompoundLookup == null || CompoundExistsInLookup(match.Text, CachedDeconjugate)))
                     {
                         merged = true;
                         newDictForm = match.Text;
@@ -1759,6 +1761,20 @@ public class MorphologicalAnalyser
         }
 
         return result;
+    }
+
+    private bool CompoundExistsInLookup(string compoundForm, Func<string, HashSet<DeconjugationForm>> cachedDeconjugate)
+    {
+        if (HasCompoundLookup!(compoundForm))
+            return true;
+
+        foreach (var form in cachedDeconjugate(compoundForm))
+        {
+            if (HasCompoundLookup(form.Text))
+                return true;
+        }
+
+        return false;
     }
 
     private List<WordInfo> CombinePrefixes(List<WordInfo> wordInfos)

@@ -446,7 +446,7 @@ namespace Jiten.Parser
         {
             await EnsureInitializedAsync(contextFactory);
 
-            var parser = new MorphologicalAnalyser();
+            var parser = new MorphologicalAnalyser { HasCompoundLookup = HasLookupForCompound };
             var sentences = await parser.Parse(text, preserveStopToken: preserveStopToken, diagnostics: diagnostics);
 
             await PreprocessSentences(sentences);
@@ -489,7 +489,7 @@ namespace Jiten.Parser
             timer.Start();
 
             // Batch morphological analysis
-            var parser = new MorphologicalAnalyser();
+            var parser = new MorphologicalAnalyser { HasCompoundLookup = HasLookupForCompound };
             var batchedSentences = await parser.ParseBatch(texts, diagnostics: diagnostics);
 
             timer.Stop();
@@ -593,7 +593,7 @@ namespace Jiten.Parser
         {
             await EnsureInitializedAsync(contextFactory);
 
-            var parser = new MorphologicalAnalyser();
+            var parser = new MorphologicalAnalyser { HasCompoundLookup = HasLookupForCompound };
             var sentences = await parser.Parse(text, morphemesOnly: true, diagnostics: diagnostics);
             var wordInfos = sentences.SelectMany(s => s.Words).Select(w => w.word).ToList();
 
@@ -1834,6 +1834,16 @@ namespace Jiten.Parser
                     }
                 }
             }
+        }
+
+        private static bool HasLookupForCompound(string dictForm)
+        {
+            if (_lookups == null) return true;
+            if (_lookups.TryGetValue(dictForm, out var ids) && ids.Count > 0)
+                return true;
+
+            var hira = KanaNormalizer.Normalize(WanaKana.ToHiragana(dictForm));
+            return hira != dictForm && _lookups.TryGetValue(hira, out ids) && ids.Count > 0;
         }
 
         private static bool TryLongVowelLookup(string text, bool useKanaNormalizer = true)
