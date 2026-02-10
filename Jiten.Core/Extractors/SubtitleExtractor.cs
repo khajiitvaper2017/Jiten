@@ -23,7 +23,9 @@ public partial class SubtitleExtractor
         "OPCN",
         "EDCN",
         "SCR",
-        "STAFF"
+        "STAFF",
+        "CHI",
+        "EDSC"
     ];
 
     /// <summary>

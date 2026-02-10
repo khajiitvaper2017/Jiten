@@ -37,7 +37,9 @@ public class JimakuDownloader
         "OPCN",
         "EDCN",
         "SCR",
-        "STAFF"
+        "STAFF",
+        "CHI",
+        "EDSC"
     ];
 
     public static async Task Download(string? baseDirectory, int startRange, int endRange)
