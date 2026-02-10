@@ -7,6 +7,17 @@ namespace Jiten.Core;
 public partial class SubtitleExtractor
 {
     public static readonly string[] SupportedExtensions = [".ass", ".srt", ".ssa"];
+    // ASS styles/markers to skip (CN lines)
+    public static readonly string[] ChineseLineMarkers =
+    [
+        "720通用注釋",
+        "1080通用注釋",
+        "通用720中文",
+        "單語720中文",
+        "通用1080中文",
+        "單語1080中文",
+        "花語製作通用"
+    ];
 
     /// <summary>
     /// Extract plain text from a subtitle file (.ass, .srt, .ssa)
@@ -50,8 +61,13 @@ public partial class SubtitleExtractor
     {
         var ssaPath = Path.ChangeExtension(filePath, ".ssa");
         var lines = await File.ReadAllLinesAsync(filePath);
+        // Drop comments and CN-marked lines
         var filteredLines = lines
-            .Where(line => !line.TrimStart().StartsWith(';') && !line.Contains("cn"))
+            .Where(line =>
+                !line.TrimStart().StartsWith(';') &&
+                !line.StartsWith("Comment:", StringComparison.OrdinalIgnoreCase) &&
+                !line.Contains("cn") &&
+                !ChineseLineMarkers.Any(marker => line.Contains(marker, StringComparison.Ordinal)))
             .ToList();
         await File.WriteAllLinesAsync(ssaPath, filteredLines);
         return ssaPath;
