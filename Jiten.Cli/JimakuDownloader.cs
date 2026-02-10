@@ -24,13 +24,20 @@ public class JimakuDownloader
     // ASS styles/markers to skip (CN lines)
     private static readonly string[] _chineseLineMarkers =
     [
+        "cn",
         "720通用注釋",
         "1080通用注釋",
         "通用720中文",
         "單語720中文",
         "通用1080中文",
         "單語1080中文",
-        "花語製作通用"
+        "花語製作通用",
+        "CN",
+        "CN2",
+        "OPCN",
+        "EDCN",
+        "SCR",
+        "STAFF"
     ];
 
     public static async Task Download(string? baseDirectory, int startRange, int endRange)
@@ -161,7 +168,6 @@ public class JimakuDownloader
                     .Where(line =>
                         !line.TrimStart().StartsWith(";") &&
                         !line.StartsWith("Comment:", StringComparison.OrdinalIgnoreCase) &&
-                        !line.Contains("cn") &&
                         !_chineseLineMarkers.Any(marker => line.Contains(marker, StringComparison.Ordinal)))
                     .ToList();
                 await File.WriteAllLinesAsync(ssaFile, filteredLines);

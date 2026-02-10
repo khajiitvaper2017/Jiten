@@ -10,13 +10,20 @@ public partial class SubtitleExtractor
     // ASS styles/markers to skip (CN lines)
     public static readonly string[] ChineseLineMarkers =
     [
+        "cn",
         "720通用注釋",
         "1080通用注釋",
         "通用720中文",
         "單語720中文",
         "通用1080中文",
         "單語1080中文",
-        "花語製作通用"
+        "花語製作通用",
+        "CN",
+        "CN2",
+        "OPCN",
+        "EDCN",
+        "SCR",
+        "STAFF"
     ];
 
     /// <summary>
@@ -66,7 +73,6 @@ public partial class SubtitleExtractor
             .Where(line =>
                 !line.TrimStart().StartsWith(';') &&
                 !line.StartsWith("Comment:", StringComparison.OrdinalIgnoreCase) &&
-                !line.Contains("cn") &&
                 !ChineseLineMarkers.Any(marker => line.Contains(marker, StringComparison.Ordinal)))
             .ToList();
         await File.WriteAllLinesAsync(ssaPath, filteredLines);
